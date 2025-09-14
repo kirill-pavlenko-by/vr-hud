@@ -2,194 +2,157 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — A-Frame CanvasTexture Bridge (Quest 2)</title>
+  <title>VR HUD — camera-attached</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
-  <!-- A-Frame с надёжного CDN -->
   <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
   <style>
     html,body{margin:0;height:100%;background:#04060a;color:#aee8ff;font-family:ui-monospace,Consolas,Monaco,monospace}
-    .hidden{position:absolute;left:-9999px;top:-9999px;visibility:hidden}
     #ui{position:fixed;left:12px;bottom:12px;z-index:10;font:14px monospace}
     #ui button{padding:6px 10px;margin-right:8px}
+    .hidden{position:absolute;left:-9999px;top:-9999px;visibility:hidden}
   </style>
 </head>
 <body>
 
-  <!-- Скрытые канвасы-источники (можно заменить на твои реальные ID) -->
+  <!-- скрытые канвасы-источники (или заменишь на свои реальные ID) -->
   <div class="hidden">
     <canvas id="cComp"  width="640" height="360"></canvas>
     <canvas id="cSpec"  width="640" height="360"></canvas>
     <canvas id="cSpeed" width="640" height="360"></canvas>
   </div>
 
-  <!-- Кнопки управления -->
   <div id="ui">
     <button onclick="recenter()">[R] Recenter</button>
     <button onclick="fitPanel()">[F] Fit panel</button>
   </div>
 
-  <!-- Сцена -->
   <a-scene renderer="colorManagement:true;physicallyCorrectLights:false"
            background="color:#04060a"
            xr="enabled:true">
-    <!-- Камера/риг -->
+
+    <!-- риг и камера -->
     <a-entity id="rig" position="0 1.6 0">
-      <a-camera wasd-controls-enabled="false" look-controls="pointerLockEnabled:false; mouseEnabled:true"></a-camera>
+      <a-entity id="cam" camera look-controls="pointerLockEnabled:false; mouseEnabled:true"></a-entity>
     </a-entity>
 
-    <!-- Панель HUD -->
-    <a-entity id="hudPanel"
-              position="0 1.6 -1.2"
-              rotation="0 0 0"
-              hud-texture="width:2048; height:1024; metersW:1.6; metersH:0.9; curved:false; radius:1.05; distance:1.2"
-              face-camera>
-    </a-entity>
+    <!-- тестовый куб (чтобы видеть, что сцена живёт) -->
+    <a-box position="0 1.6 -2" depth="0.5" height="0.5" width="0.5" color="#00ff66"></a-box>
 
-    <!-- Контроллер+курсор -->
-    <a-entity laser-controls="hand: right"></a-entity>
-    <a-entity cursor="rayOrigin: mouse"></a-entity>
-
-    <!-- Лёгкий свет -->
+    <!-- свет -->
     <a-entity light="type:ambient;color:#5fffd0;intensity:0.15"></a-entity>
     <a-entity light="type:point;color:#00ffaa;intensity:0.3;distance:5" position="0 1.6 -1.6"></a-entity>
   </a-scene>
 
-  <script>
-    // ====== Настройки ======
-    const SOURCE_CANVASES = ['cComp','cSpec','cSpeed'];
-    const GRID_COLS = 3, GRID_ROWS = 1, PAD = 40;
+<script>
+/* ======= настройки HUD-канваса ======= */
+const SOURCE_CANVASES = ['cComp','cSpec','cSpeed'];
+const GRID_COLS = 3, GRID_ROWS = 1, PAD = 40;
 
-    // ====== Единый HUD-холст ======
-    const hudCanvas = document.createElement('canvas');
-    const hudCtx = hudCanvas.getContext('2d');
+const hudCanvas = document.createElement('canvas');
+const hudCtx = hudCanvas.getContext('2d');
 
-    function drawPlaceholder(ctx, w, h, label){
-      ctx.fillStyle='#0a1018'; ctx.fillRect(0,0,w,h);
-      ctx.strokeStyle='#00ff66'; ctx.lineWidth=2; ctx.setLineDash([8,6]);
-      ctx.strokeRect(3,3,w-6,h-6); ctx.setLineDash([]);
-      ctx.fillStyle='#aee8ff'; ctx.font='24px ui-monospace,monospace';
-      ctx.fillText(label,16,36);
-      for(let i=0;i<32;i++){
-        const x=16+i*((w-32)/32), bar=Math.sin(Date.now()*0.003+i)*0.5+0.5;
-        const bh=16+bar*(h-80);
-        ctx.fillStyle='#00ff66'; ctx.fillRect(x,h-24-bh,(w-32)/32*0.8,bh);
-      }
-    }
+function drawPlaceholder(ctx,w,h,label){
+  ctx.fillStyle='#0a1018'; ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#00ff66'; ctx.lineWidth=2; ctx.setLineDash([8,6]);
+  ctx.strokeRect(3,3,w-6,h-6); ctx.setLineDash([]);
+  ctx.fillStyle='#aee8ff'; ctx.font='24px ui-monospace,monospace';
+  ctx.fillText(label,16,36);
+  for(let i=0;i<32;i++){
+    const x=16+i*((w-32)/32), bar=Math.sin(Date.now()*0.003+i)*0.5+0.5;
+    const bh=16+bar*(h-80);
+    ctx.fillStyle='#00ff66'; ctx.fillRect(x,h-24-bh,(w-32)/32*0.8,bh);
+  }
+}
 
-    function composeHUD(){
-      const W=hudCanvas.width, H=hudCanvas.height;
-      hudCtx.fillStyle='#04060a'; hudCtx.fillRect(0,0,W,H);
-      hudCtx.fillStyle='#00ff66'; hudCtx.font='bold 48px ui-monospace,monospace';
-      hudCtx.fillText('C:\\> INTERSTELLAR HUD // VR',48,88);
+function composeHUD(){
+  const W=hudCanvas.width, H=hudCanvas.height;
+  hudCtx.fillStyle='#04060a'; hudCtx.fillRect(0,0,W,H);
+  hudCtx.fillStyle='#00ff66'; hudCtx.font='bold 48px ui-monospace,monospace';
+  hudCtx.fillText('C:\\> INTERSTELLAR HUD // VR',48,88);
 
-      const cellW=Math.floor((W-PAD*(GRID_COLS+1))/GRID_COLS);
-      const cellH=Math.floor((H-140-PAD*(GRID_ROWS+1))/GRID_ROWS);
+  const cellW=Math.floor((W-PAD*(GRID_COLS+1))/GRID_COLS);
+  const cellH=Math.floor((H-140-PAD*(GRID_ROWS+1))/GRID_ROWS);
 
-      SOURCE_CANVASES.forEach((id,idx)=>{
-        const col=idx%GRID_COLS, row=(idx/GRID_COLS|0);
-        const x=PAD+col*(cellW+PAD), y=120+PAD+row*(cellH+PAD);
-        const src=document.getElementById(id);
+  SOURCE_CANVASES.forEach((id,idx)=>{
+    const col=idx%GRID_COLS, row=(idx/GRID_COLS|0);
+    const x=PAD+col*(cellW+PAD), y=120+PAD+row*(cellH+PAD);
+    const src=document.getElementById(id);
+    hudCtx.save();
+    hudCtx.fillStyle='#071018'; hudCtx.fillRect(x-8,y-8,cellW+16,cellH+16);
+    hudCtx.strokeStyle='#00aa55'; hudCtx.lineWidth=2;
+    hudCtx.strokeRect(x-8.5,y-8.5,cellW+17,cellH+17);
+    if(src && src.width && src.height){ hudCtx.drawImage(src,x,y,cellW,cellH); }
+    else { hudCtx.save(); hudCtx.translate(x,y); drawPlaceholder(hudCtx,cellW,cellH,id||'canvas'); hudCtx.restore(); }
+    hudCtx.restore();
+  });
 
-        hudCtx.save();
-        hudCtx.fillStyle='#071018'; hudCtx.fillRect(x-8,y-8,cellW+16,cellH+16);
-        hudCtx.strokeStyle='#00aa55'; hudCtx.lineWidth=2;
-        hudCtx.strokeRect(x-8.5,y-8.5,cellW+17,cellH+17);
+  hudCtx.fillStyle='#aee8ff'; hudCtx.font='20px ui-monospace,monospace';
+  hudCtx.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`,48,H-36);
+}
 
-        if(src && src.width && src.height){
-          hudCtx.drawImage(src,x,y,cellW,cellH);
-        }else{
-          hudCtx.save(); hudCtx.translate(x,y);
-          drawPlaceholder(hudCtx,cellW,cellH,id||'canvas');
-          hudCtx.restore();
-        }
-        hudCtx.restore();
-      });
+/* демо-анимация заглушек */
+(function tickPlaceholders(){
+  ['cComp','cSpec','cSpeed'].forEach(id=>{
+    const c=document.getElementById(id); if(!c) return;
+    drawPlaceholder(c.getContext('2d'), c.width, c.height, id.toUpperCase());
+  });
+  requestAnimationFrame(tickPlaceholders);
+})();
 
-      hudCtx.fillStyle='#aee8ff'; hudCtx.font='20px ui-monospace,monospace';
-      hudCtx.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`,48,H-36);
-    }
+/* ======= компонент текстуры ======= */
+AFRAME.registerComponent('hud-texture', {
+  schema:{
+    width:{type:'int',default:2048},
+    height:{type:'int',default:1024},
+    metersW:{type:'number',default:1.6},
+    metersH:{type:'number',default:0.9}
+  },
+  init(){
+    const THREE = AFRAME.THREE;
+    const d=this.data;
+    hudCanvas.width=d.width; hudCanvas.height=d.height;
+    composeHUD(); // первый кадр
 
-    // Демка-анимация для заглушек
-    (function tickPlaceholders(){
-      ['cComp','cSpec','cSpeed'].forEach(id=>{
-        const c=document.getElementById(id); if(!c) return;
-        const g=c.getContext('2d'); drawPlaceholder(g,c.width,c.height,id.toUpperCase());
-      });
-      requestAnimationFrame(tickPlaceholders);
-    })();
+    this.tex=new THREE.CanvasTexture(hudCanvas);
+    this.tex.encoding=THREE.sRGBEncoding;
+    const mat=new THREE.MeshBasicMaterial({map:this.tex,side:THREE.DoubleSide});
+    this.mesh=new THREE.Mesh(new THREE.PlaneGeometry(d.metersW,d.metersH), mat);
+    this.el.object3D.add(this.mesh);
+  },
+  tick(){
+    composeHUD();
+    this.tex.needsUpdate=true;
+  }
+});
 
-    // ====== Компоненты A-Frame ======
+/* ======= инициализация после загрузки сцены ======= */
+window.addEventListener('DOMContentLoaded', ()=>{
+  const scene = document.querySelector('a-scene');
 
-    // Повернуть панель лицом к камере (надёжнее встроенного look-at)
-    AFRAME.registerComponent('face-camera',{
-      tick: function(){
-        const cam = this.el.sceneEl && this.el.sceneEl.camera;
-        if(!cam) return;
-        const THREE = AFRAME.THREE;
-        const v = new THREE.Vector3();
-        cam.getWorldPosition(v);
-        this.el.object3D.lookAt(v);
-        // Разворачиваем, чтобы «лицевая» сторона смотрела на камеру
-        this.el.object3D.rotateY(Math.PI);
-      }
-    });
+  scene.addEventListener('loaded', ()=>{
+    // находим камеру и вешаем панель как ДИТЯ камеры
+    const cam = document.querySelector('#cam');
+    const panel = document.createElement('a-entity');
+    panel.setAttribute('id','hudPanel');
+    panel.setAttribute('position','0 0 -1.1');            // всегда перед глазами
+    panel.setAttribute('rotation','0 0 0');
+    panel.setAttribute('hud-texture','width:2048; height:1024; metersW:1.8; metersH:1.0');
+    cam.appendChild(panel);                                 // <<< ключевая строка
+  });
+});
 
-    // Текстура из HUD-канваса
-    AFRAME.registerComponent('hud-texture',{
-      schema:{
-        width:{type:'int',default:2048},
-        height:{type:'int',default:1024},
-        metersW:{type:'number',default:1.6},
-        metersH:{type:'number',default:0.9},
-        curved:{type:'boolean',default:false},
-        radius:{type:'number',default:1.05},
-        distance:{type:'number',default:1.2}
-      },
-      init:function(){
-        const d=this.data, THREE=AFRAME.THREE;
-        hudCanvas.width=d.width; hudCanvas.height=d.height;
-        composeHUD(); // первый кадр, чтобы не было чёрного экрана
-
-        this.tex=new THREE.CanvasTexture(hudCanvas);
-        this.tex.encoding=THREE.sRGBEncoding;
-        const mat=new THREE.MeshBasicMaterial({map:this.tex,side:THREE.DoubleSide});
-
-        // плоская геометрия (надёжнее на старте)
-        const geo=new THREE.PlaneGeometry(d.metersW,d.metersH);
-        this.mesh=new THREE.Mesh(geo,mat);
-        this.el.object3D.add(this.mesh);
-
-        // поставить перед камерой
-        const p=this.el.object3D.position; p.set(0,1.6,-d.distance);
-
-        // быстрая клавиатура
-        window.addEventListener('keydown',(e)=>{
-          if(e.key==='+'||e.key==='='){ this.data.distance=Math.max(0.8,this.data.distance-0.1); this.el.object3D.position.set(0,1.6,-this.data.distance); }
-          if(e.key==='-'){ this.data.distance=Math.min(3.0,this.data.distance+0.1); this.el.object3D.position.set(0,1.6,-this.data.distance); }
-        });
-      },
-      tick:function(){
-        composeHUD();
-        this.tex.needsUpdate=true;
-      }
-    });
-
-    // ====== Кнопки ======
-    function recenter(){
-      const rig=document.querySelector('#rig');
-      const panel=document.querySelector('#hudPanel');
-      rig.setAttribute('position','0 1.6 0');
-      panel.setAttribute('position','0 1.6 -1.2');
-      // face-camera сам довернёт панель
-    }
-    function fitPanel(){
-      const panel=document.querySelector('#hudPanel');
-      panel.setAttribute('hud-texture','metersW:1.9; metersH:1.05; distance:1.05; curved:false');
-      panel.setAttribute('position','0 1.6 -1.05');
-    }
-    // авто-рецентр при входе в VR
-    document.querySelector('a-scene').addEventListener('enter-vr', recenter);
-  </script>
+/* ======= кнопки ======= */
+function recenter(){
+  const rig=document.querySelector('#rig');
+  rig.setAttribute('position','0 1.6 0');
+}
+function fitPanel(){
+  const panel=document.querySelector('#hudPanel');
+  if(!panel) return;
+  panel.setAttribute('position','0 0 -1.0');               // ближе
+  panel.setAttribute('hud-texture','width:2048; height:1024; metersW:2.0; metersH:1.1');
+}
+</script>
 </body>
 </html>
