@@ -32,78 +32,55 @@
   </div>
   <div id="vrDock"></div>
 
-  <!-- Три — UMD, без модулей -->
+  <!-- THREE UMD (без модулей) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
   <script>
-  // ---------- Простой VRButton без модулей ----------
+  // --- Простой VR-кнопка без модулей ---
   function createSimpleVRButton(renderer){
     const btn = document.createElement('button');
     btn.textContent = 'Enter VR';
     btn.style.cssText = 'padding:10px 14px;border-radius:10px;background:#123040;color:#dff8ff;border:1px solid #45c0d4;cursor:pointer';
-    const dock = document.getElementById('vrDock');
-    dock.appendChild(btn);
+    document.getElementById('vrDock').appendChild(btn);
 
     if(!('xr' in navigator)){ btn.textContent='VR NOT SUPPORTED'; btn.disabled=true; return btn; }
 
-    let currentSession=null;
-
-    async function onSessionStarted(session){
-      currentSession=session;
-      renderer.xr.enabled = true;
-      // включаем DOM Overlay, чтобы верхний UI был виден поверх
-      try{
-        await renderer.xr.setSession(session);
-      }catch(e){
-        console.warn('xr.setSession error', e);
-      }
-      btn.textContent='Exit VR';
-      session.addEventListener('end', onSessionEnded);
-    }
-    function onSessionEnded(){
-      currentSession=null;
-      btn.textContent='Enter VR';
-    }
+    let session=null;
+    async function onStarted(s){ session=s; renderer.xr.enabled=true; await renderer.xr.setSession(s); btn.textContent='Exit VR'; s.addEventListener('end', onEnded); }
+    function onEnded(){ session=null; btn.textContent='Enter VR'; }
 
     btn.addEventListener('click', async ()=>{
-      if(currentSession){
-        await currentSession.end();
-        return;
-      }
+      if(session){ await session.end(); return; }
       try{
-        const sessionInit = {
-          optionalFeatures: ['local-floor','bounded-floor','dom-overlay'],
-          domOverlay: { root: document.body }
-        };
-        const session = await navigator.xr.requestSession('immersive-vr', sessionInit);
-        await onSessionStarted(session);
-      }catch(err){
-        console.warn('requestSession failed', err);
-      }
+        const init={ optionalFeatures:['local-floor','bounded-floor','dom-overlay'], domOverlay:{root:document.body} };
+        const s=await navigator.xr.requestSession('immersive-vr', init);
+        await onStarted(s);
+      }catch(e){ console.warn('requestSession failed', e); }
     });
     return btn;
   }
   </script>
 
   <script>
-  // ---------- HUD холст ----------
-  const HUD_W = 1536, HUD_H = 864;    // сбалансированно для Quest
-  const PAD = 28;
+  /* ===================== HUD CANVAS ===================== */
+  // Увеличили на 25%
+  const SCALE = 1.25;
+  const HUD_W = Math.round(1536*SCALE), HUD_H = Math.round(864*SCALE);
+  const PAD = Math.round(28*SCALE);
+
   const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
   const g = hudCanvas.getContext('2d');
 
-  // ---------- анимация ----------
   const anim = {dur:1200, start:0, active:false};
   const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
   function triggerAnim(now){ anim.start=now; anim.active=true; }
 
-  // ---------- данные (как договаривались) ----------
   const PASSPORTS = {
     "1I": {
       id:"1I", name:"ʻOumuamua",
       composition:[ {label:"H₂O (UL)",value:2}, {label:"CO (UL)",value:2} ],
       spectrum:[ {lambda:388,label:"CN",val:0.06}, {lambda:405,label:"C₃",val:0.04} ],
-      velocity:{ value:26.5, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+      velocity:{ value:26.3, max:100, unit:"km/s", ticks:[.25,.5,.75] },
       mass:{ value:0.10, unit:"rel." },
       coolness:{ value:92, max:100 },
       reliability:{ measured:0.20, upper:0.20, inferred:0.60 }
@@ -112,7 +89,7 @@
       id:"2I", name:"Borisov",
       composition:[ {label:"H₂O",value:100}, {label:"CO",value:150} ],
       spectrum:[ {lambda:388,label:"CN",val:1.00}, {lambda:405,label:"C₃",val:0.55}, {lambda:516.5,label:"C₂",val:0.70} ],
-      velocity:{ value:32.4, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+      velocity:{ value:32.7, max:100, unit:"km/s", ticks:[.25,.5,.75] },
       mass:{ value:0.55, unit:"rel." },
       coolness:{ value:85, max:100 },
       reliability:{ measured:0.70, upper:0.10, inferred:0.20 }
@@ -121,7 +98,7 @@
       id:"3I", name:"ATLAS",
       composition:[ {label:"H₂O",value:120}, {label:"CO₂",value:110} ],
       spectrum:[ {lambda:388,label:"CN",val:0.60}, {lambda:405,label:"C₃",val:0.40}, {lambda:516.5,label:"C₂",val:0.70} ],
-      velocity:{ value:58.0, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+      velocity:{ value:63.0, max:100, unit:"km/s", ticks:[.25,.5,.75] },
       mass:{ value:0.35, unit:"rel." },
       coolness:{ value:78, max:100 },
       reliability:{ measured:0.55, upper:0.15, inferred:0.30 }
@@ -129,62 +106,61 @@
   };
   let current = PASSPORTS["1I"];
 
-  // ---------- рисовалки ----------
   function frame(ctx,x,y,w,h,title){
     ctx.save();
     ctx.fillStyle='#08141c'; ctx.globalAlpha=0.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
     ctx.strokeStyle='#00aa55'; ctx.lineWidth=2; ctx.setLineDash([8,6]); ctx.strokeRect(x+0.5,y+0.5,w-1,h-1); ctx.setLineDash([]);
-    if(title){ ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(title, x+10, y+22); }
+    if(title){ ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title, x+10, y+22*SCALE); }
     ctx.restore();
   }
   function capsules(ctx,x,y,w,h,rows,p){
-    const top=26, gap=18, bh=(h-top-24 - gap*(rows.length-1))/rows.length;
+    const top=26*SCALE, gap=18*SCALE, bh=(h-top-24*SCALE - gap*(rows.length-1))/rows.length;
     ctx.save(); ctx.translate(x,y);
     rows.forEach((row,i)=>{
       const yy=top + i*(bh+gap);
       const perc=Math.max(0,Math.min(1,row.value/150));
-      const rx=90, rw=Math.max(8,(w-120)*perc*p), rh=bh;
+      const rx=90*SCALE, rw=Math.max(8*SCALE,(w-120*SCALE)*perc*p), rh=bh;
       ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
-      for(let gx=0; gx<w-100; gx+=80){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
-      const grad=ctx.createLinearGradient(0,yy,w-100,yy);
+      for(let gx=0; gx<w-100*SCALE; gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
+      const grad=ctx.createLinearGradient(0,yy,w-100*SCALE,yy);
       grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
       ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
-      const r=Math.min(14,rh/2);
+      const r=Math.min(14*SCALE,rh/2);
       ctx.beginPath();
       ctx.moveTo(rx+r,yy); ctx.lineTo(rx+rw-r,yy); ctx.quadraticCurveTo(rx+rw,yy,rx+rw,yy+r);
       ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
       ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
       ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.textAlign='left';
+      ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.textAlign='left';
       ctx.fillText(row.label, 8, yy+rh*0.68);
       ctx.textAlign='right'; ctx.fillText((row.value*p).toFixed( (row.value<10)?1:0 ), rx+rw, yy+rh*0.68); ctx.textAlign='left';
     });
-    ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
-    ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6);
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+    ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6*SCALE);
     ctx.restore();
   }
   function spectrum(ctx,x,y,w,h,lines,p){
     ctx.save(); ctx.translate(x,y);
-    const ax=52, ay=26, gw=w-ax-16, gh=h-ay-26;
+    const ax=52*SCALE, ay=26*SCALE, gw=w-ax-16*SCALE, gh=h-ay-26*SCALE;
     ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
-    for(let gx=0; gx<=gw; gx+=80){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
+    for(let gx=0; gx<=gw; gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
     ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
     const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls)-5, Lmax=Math.max(...Ls)+5;
     const sx=λ=> ax + (λ-Lmin)/(Lmax-Lmin)*gw;
     lines.forEach(l=>{
       const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p; const top=ay+gh*(1-hRel);
       ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
-      ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5,0,Math.PI*2); ctx.fill();
-      ctx.save(); ctx.translate(lx+6, top-8); ctx.rotate(-0.24); ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
+      ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
+      ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-0.24); ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
       ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
     });
-    ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace'; ctx.fillText('λ, nm', ax+gw-40, ay+gh+20);
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+20*SCALE);
     ctx.restore();
   }
   function donut(ctx,x,y,w,h, value, max, unit, ticks=[], titleLine=null,p=1){
     ctx.save(); ctx.translate(x,y);
-    if(titleLine){ ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(titleLine,8,18); }
-    const cx=w*.5, cy=h*.52, R=Math.min(w,h)*.32, T=Math.max(20,R*.22);
+    if(titleLine){ ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(titleLine,8,18*SCALE); }
+    const cx=w*.5, cy=h*.52, R=Math.min(w,h)*.32, T=Math.max(20*SCALE,R*.22);
     ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.stroke();
     const r=Math.max(0,Math.min(1,(value/max)*p)); const a0=-Math.PI/2, a1=a0 + r*Math.PI*2;
     const grad=ctx.createLinearGradient(cx-R,cy, cx+R,cy); grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
@@ -192,36 +168,37 @@
     ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
     ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
     const shown = value*p;
-    ctx.fillStyle='#aee8ff'; ctx.font='bold 34px ui-monospace,monospace'; const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt, cx-tw/2, cy+10);
-    ctx.font='16px ui-monospace,monospace'; const pct=Math.round((shown/max)*100), subt=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(subt).width; ctx.fillText(subt, cx-stw/2, cy+30);
+    ctx.fillStyle='#aee8ff'; ctx.font=`bold ${Math.round(30*SCALE)}px ui-monospace,monospace`; /* было 34px */
+    const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt, cx-tw/2, cy+10*SCALE);
+    ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+    const pct=Math.round((shown/max)*100), subt=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(subt).width; ctx.fillText(subt, cx-stw/2, cy+30*SCALE);
     ctx.restore();
   }
   function massBar(ctx,x,y,w,h,val,p){
     ctx.save(); ctx.translate(x,y);
-    ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Mass (estimate)',8,18);
-    const ax=60, ay=28, gw=w-ax-20, gh=h-ay-28;
+    ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Mass (estimate)',8,18*SCALE);
+    const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
     ctx.strokeStyle='rgba(0,224,255,.25)'; ctx.lineWidth=1; ctx.strokeRect(ax,ay,gw,gh);
-    ctx.fillStyle='rgba(160,250,255,.85)';
-    const hh = Math.max(6, gh*val*p);
-    ctx.fillRect(ax+20, ay+gh-hh, gw-40, hh);
+    ctx.fillStyle='rgba(160,250,255,.85)'; const hh = Math.max(6*SCALE, gh*val*p);
+    ctx.fillRect(ax+20*SCALE, ay+gh-hh, gw-40*SCALE, hh);
     ctx.restore();
   }
   function reliabilityStack(ctx,x,y,w,h, r,p){
     ctx.save(); ctx.translate(x,y);
-    ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Data reliability',8,18);
-    const ax=60, ay=28, gw=w-ax-20, gh=h-ay-28;
+    ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Data reliability',8,18*SCALE);
+    const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
     const total=Math.max(1e-6, r.measured + r.upper + r.inferred);
-    const m= (r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
-    const x0=ax+20, barW=gw-40, y0=ay+20, bh=gh-40;
+    const m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
+    const x0=ax+20*SCALE, barW=gw-40*SCALE, y0=ay+20*SCALE, bh=gh-40*SCALE;
     ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
     let cur=x0;
     ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0, wm,bh); cur+=wm;
     ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0, wu,bh); cur+=wu;
     ctx.fillStyle='rgba(80,180,235,.55)';  const wi=barW*i; ctx.fillRect(cur,y0, wi,bh);
-    ctx.font='16px ui-monospace,monospace'; ctx.fillStyle='#aee8ff';
-    ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20);
-    ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180, y0+bh+20);
-    ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380, y0+bh+20);
+    ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`; ctx.fillStyle='#aee8ff';
+    ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20*SCALE);
+    ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180*SCALE, y0+bh+20*SCALE);
+    ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380*SCALE, y0+bh+20*SCALE);
     ctx.restore();
   }
 
@@ -231,57 +208,58 @@
     if (progress>=1 && anim.active) anim.active=false;
 
     g.fillStyle= '#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-    g.fillStyle= '#00ff66'; g.font='bold 38px ui-monospace,monospace';
-    g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 72);
+    g.fillStyle= '#00ff66'; g.font=`bold ${Math.round(38*SCALE)}px ui-monospace,monospace`;
+    g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 72*SCALE);
 
     const COLS=3, ROWS=2;
     const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
-    const cellH = Math.floor((HUD_H - 110 - PAD*(ROWS+1)) / ROWS);
+    const cellH = Math.floor((HUD_H - 110*SCALE - PAD*(ROWS+1)) / ROWS);
     const X = c=> PAD + c*(cellW+PAD);
-    const Y = r=> 90 + PAD + r*(cellH+PAD);
+    const Y = r=> 90*SCALE + PAD + r*(cellH+PAD);
 
     frame(g, X(0), Y(0), cellW, cellH, `#${current.id} ${current.name} — Chemical composition`);
-    capsules(g, X(0), Y(0)+24, cellW, cellH-30, current.composition, p);
+    capsules(g, X(0), Y(0)+24*SCALE, cellW, cellH-30*SCALE, current.composition, p);
 
     frame(g, X(1), Y(0), cellW, cellH, 'Emission spectrum');
-    spectrum(g, X(1), Y(0)+24, cellW, cellH-30, current.spectrum, p);
+    spectrum(g, X(1), Y(0)+24*SCALE, cellW, cellH-30*SCALE, current.spectrum, p);
 
     frame(g, X(2), Y(0), cellW, cellH, 'Velocity');
-    donut(g, X(2), Y(0)+24, cellW, cellH-30, current.velocity.value, current.velocity.max, current.velocity.unit, current.velocity.ticks, null, p);
+    donut(g, X(2), Y(0)+24*SCALE, cellW, cellH-30*SCALE, current.velocity.value, current.velocity.max, current.velocity.unit, current.velocity.ticks, null, p);
 
     frame(g, X(0), Y(1), cellW, cellH, 'Mass (estimate)');
-    massBar(g, X(0), Y(1)+24, cellW, cellH-30, current.mass.value, p);
+    massBar(g, X(0), Y(1)+24*SCALE, cellW, cellH-30*SCALE, current.mass.value, p);
 
     frame(g, X(1), Y(1), cellW, cellH, 'Coolness index');
-    donut(g, X(1), Y(1)+24, cellW, cellH-30, current.coolness.value, current.coolness.max, '%', [.25,.5,.75], 'Coolness', p);
+    donut(g, X(1), Y(1)+24*SCALE, cellW, cellH-30*SCALE, current.coolness.value, current.coolness.max, '%', [.25,.5,.75], 'Coolness', p);
 
     frame(g, X(2), Y(1), cellW, cellH, 'Data reliability');
-    reliabilityStack(g, X(2), Y(1)+24, cellW, cellH-30, current.reliability, p);
+    reliabilityStack(g, X(2), Y(1)+24*SCALE, cellW, cellH-30*SCALE, current.reliability, p);
 
-    g.fillStyle='#aee8ff'; g.font='18px ui-monospace,monospace';
-    g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-18);
+    g.fillStyle='#aee8ff'; g.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
+    g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48*SCALE, HUD_H-18*SCALE);
   }
 
-  // ---------- THREE / без модулей ----------
+  /* ===================== THREE / WEBXR ===================== */
   const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
-  renderer.xr.enabled = true;   // XR включаем, даже если не используем
+  renderer.xr.enabled = true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
-
-  createSimpleVRButton(renderer); // VR кнопка вниз по центру
+  createSimpleVRButton(renderer);
 
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a);
   const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
   camera.position.set(0,1.6,0); scene.add(camera);
 
-  // Панель
-  let CURVED=true, RADIUS=1.2, PANEL_W=2.1, PANEL_H=1.25;
+  // Группа-держатель (к ней lookAt), а панель — дочерняя
+  const holder = new THREE.Group(); scene.add(holder);
+
+  let CURVED=true, RADIUS=1.2, PANEL_W=2.1, PANEL_H=1.25; // реальные метры
   function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
     if(!curved) return new THREE.PlaneGeometry(w,h);
     const arc = w / r;
-    const thetaStart = Math.PI/2 - arc/2;
+    const thetaStart = -arc/2;                 // центр дуги = 0 рад
     return new THREE.CylinderGeometry(r, r, h, 96, 1, true, thetaStart, arc);
   }
 
@@ -294,15 +272,21 @@
 
   const hudMaterial = new THREE.MeshBasicMaterial({map:hudTexture, side:THREE.DoubleSide});
   const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
-  scene.add(hudPanel);
+  holder.add(hudPanel);
+
+  // Для изогнутой панели ось «вперёд» — X, поэтому поворачиваем ребёнка на +90°
+  function setPanelRotation(){
+    hudPanel.rotation.set(0, CURVED ? Math.PI/2 : 0, 0);
+  }
+  setPanelRotation();
 
   function placeInFront(dist=1.7){
     camera.updateMatrixWorld(true);
     const dir = new THREE.Vector3();
     camera.getWorldDirection(dir);
     const pos = new THREE.Vector3().copy(camera.position).add(dir.multiplyScalar(dist));
-    hudPanel.position.copy(pos);
-    hudPanel.lookAt(camera.position);
+    holder.position.copy(pos);
+    holder.lookAt(camera.position);
   }
   placeInFront(1.7);
 
@@ -319,6 +303,7 @@
     document.getElementById('btnCurve').textContent = CURVED?'Curved ON':'Curved OFF';
     hudPanel.geometry.dispose();
     hudPanel.geometry = buildPanelGeometry(CURVED);
+    setPanelRotation();
     placeInFront(1.7);
   };
   document.getElementById('btnRecenter').onclick = ()=> placeInFront(1.7);
@@ -330,14 +315,12 @@
     placeInFront(1.7);
   });
 
-  // Рендер
+  // Единый цикл: работает и в обычном окне, и в VR
   let last=0; const HUD_INTERVAL=1000/30;
-  function renderLoop(t){
+  renderer.setAnimationLoop((t)=>{
     if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
     renderer.render(scene,camera);
-    requestAnimationFrame(renderLoop);
-  }
-  requestAnimationFrame(renderLoop);
+  });
 
   triggerAnim(performance.now());
   </script>
