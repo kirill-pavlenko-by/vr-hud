@@ -2,25 +2,17 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — world-locked panel (Three.js WebXR)</title>
+  <title>VR HUD — Three.js WebXR (world-locked)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
   <style>
     html,body{margin:0;height:100%;background:#04060a;color:#aee8ff;font-family:ui-monospace,Consolas,Monaco,monospace}
     #ui{position:fixed;left:12px;bottom:12px;z-index:10}
     #ui button{padding:6px 10px;margin-right:8px}
-    .hidden{position:absolute;left:-9999px;top:-9999px;visibility:hidden}
     canvas{display:block}
   </style>
 </head>
 <body>
-  <!-- скрытые канвасы-источники (замени ID на свои реальные) -->
-  <div class="hidden">
-    <canvas id="cComp"  width="640" height="360"></canvas>
-    <canvas id="cSpec"  width="640" height="360"></canvas>
-    <canvas id="cSpeed" width="640" height="360"></canvas>
-  </div>
-
   <div id="ui">
     <button id="btnVR">Enter VR</button>
     <button id="btnPin">Unpin (world)</button>
@@ -32,67 +24,64 @@
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ---------- HUD сборка ----------
-    const SOURCE_CANVASES = ['cComp','cSpec','cSpeed'];
-    const GRID_COLS = 3, GRID_ROWS = 1, PAD = 40;
+    // ========= 1) HUD-текстура (процедурная анимация) =========
+    // Можно поднять до 4096x2048 если текст мелкий (но следи за FPS на Quest 2)
+    const HUD_W = 2048, HUD_H = 1024;
+    const hudCanvas = document.createElement('canvas'); hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
+    const g = hudCanvas.getContext('2d');
 
-    const hudCanvas = document.createElement('canvas');
-    const hudCtx = hudCanvas.getContext('2d');
+    const COLS = 3, ROWS = 1, PAD = 40;
+    const titleFont = 48, labelFont = 24, footFont = 20; // кегли (px)
+    const panels = ["CCOMP","CSPEC","CSPEED"];
 
-    function drawPlaceholder(ctx,w,h,label){
-      ctx.fillStyle='#0a1018'; ctx.fillRect(0,0,w,h);
-      ctx.strokeStyle='#00ff66'; ctx.lineWidth=2; ctx.setLineDash([8,6]);
-      ctx.strokeRect(3,3,w-6,h-6); ctx.setLineDash([]);
-      ctx.fillStyle='#aee8ff'; ctx.font='24px ui-monospace,monospace';
-      ctx.fillText(label,16,36);
-      for(let i=0;i<32;i++){
-        const x=16+i*((w-32)/32), bar=Math.sin(Date.now()*0.003+i)*0.5+0.5;
-        const bh=16+bar*(h-80);
-        ctx.fillStyle='#00ff66'; ctx.fillRect(x,h-24-bh,(w-32)/32*0.8,bh);
+    function drawBars(ctx, w, h, t, seed=0){
+      const N = 32;
+      const barW = (w-32)/N * 0.8;
+      for(let i=0;i<N;i++){
+        const x = 16 + i*((w-32)/N);
+        const phase = i*0.37 + seed*1.13;
+        const amp = Math.sin(t*0.002 + phase)*0.5 + 0.5;               // [0..1]
+        const val = 16 + amp*(h-80);
+        ctx.fillRect(x, h-24-val, barW, val);
       }
     }
-    function composeHUD(){
-      const W=hudCanvas.width, H=hudCanvas.height;
-      hudCtx.fillStyle='#04060a'; hudCtx.fillRect(0,0,W,H);
-      hudCtx.fillStyle='#00ff66'; hudCtx.font='bold 48px ui-monospace,monospace';
-      hudCtx.fillText('C:\\> INTERSTELLAR HUD // VR',48,88);
 
-      const cellW=Math.floor((W-PAD*(GRID_COLS+1))/GRID_COLS);
-      const cellH=Math.floor((H-140-PAD*(GRID_ROWS+1))/GRID_ROWS);
+    function renderHUD(t){
+      // фон
+      g.fillStyle = '#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
+      // заголовок
+      g.fillStyle = '#00ff66'; g.font = `bold ${titleFont}px ui-monospace,monospace`;
+      g.fillText('C:\\> INTERSTELLAR HUD // VR', 48, 88);
 
-      SOURCE_CANVASES.forEach((id,idx)=>{
-        const col=idx%GRID_COLS, row=(idx/GRID_COLS|0);
-        const x=PAD+col*(cellW+PAD), y=120+PAD+row*(cellH+PAD);
-        const src=document.getElementById(id);
+      // сетка
+      const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
+      const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
 
-        hudCtx.save();
-        hudCtx.fillStyle='#071018'; hudCtx.fillRect(x-8,y-8,cellW+16,cellH+16);
-        hudCtx.strokeStyle='#00aa55'; hudCtx.lineWidth=2;
-        hudCtx.strokeRect(x-8.5,y-8.5,cellW+17,cellH+17);
+      for(let idx=0; idx<panels.length; idx++){
+        const col = idx % COLS, row = (idx/COLS)|0;
+        const x = PAD + col*(cellW + PAD);
+        const y = 120 + PAD + row*(cellH + PAD);
 
-        if(src && src.width && src.height){
-          hudCtx.drawImage(src,x,y,cellW,cellH);
-        }else{
-          hudCtx.save(); hudCtx.translate(x,y);
-          drawPlaceholder(hudCtx,cellW,cellH,id||'canvas');
-          hudCtx.restore();
-        }
-        hudCtx.restore();
-      });
+        // рамка
+        g.fillStyle = '#071018'; g.fillRect(x-8, y-8, cellW+16, cellH+16);
+        g.strokeStyle = '#00aa55'; g.lineWidth = 2;
+        g.setLineDash([8,6]); g.strokeRect(x-8.5, y-8.5, cellW+17, cellH+17); g.setLineDash([]);
 
-      hudCtx.fillStyle='#aee8ff'; hudCtx.font='20px ui-monospace,monospace';
-      hudCtx.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`,48,H-36);
+        // подпись
+        g.fillStyle = '#aee8ff'; g.font = `${labelFont}px ui-monospace,monospace`;
+        g.fillText(panels[idx], x+8, y+28);
+
+        // сами столбики (живут в том же кадре XR → не замирают)
+        g.fillStyle = '#00ff66';
+        drawBars(g, cellW, cellH, t, idx);
+      }
+
+      // строка статуса
+      g.fillStyle = '#aee8ff'; g.font = `${footFont}px ui-monospace,monospace`;
+      g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
     }
-    // демо-анимация заглушек
-    (function tickPlaceholders(){
-      ['cComp','cSpec','cSpeed'].forEach(id=>{
-        const c=document.getElementById(id); if(!c) return;
-        drawPlaceholder(c.getContext('2d'), c.width, c.height, id.toUpperCase());
-      });
-      requestAnimationFrame(tickPlaceholders);
-    })();
 
-    // ---------- Three.js сцена ----------
+    // ========= 2) Three.js сцена =========
     const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
@@ -101,24 +90,15 @@
     document.body.appendChild(renderer.domElement);
     document.getElementById('btnVR').replaceWith(VRButton.createButton(renderer));
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x04060a);
-
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a);
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
-    camera.position.set(0,1.6,0);
-    scene.add(camera);
+    camera.position.set(0,1.6,0); scene.add(camera);
 
-    // тестовый куб
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshBasicMaterial({color:0x00ff66}));
-    box.position.set(0,1.6,-2);
-    scene.add(box);
+    // тестовый куб (контроль сцены)
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshBasicMaterial({color:0x00ff66}));
+    cube.position.set(0,1.6,-2); scene.add(cube);
 
-    // ---------- HUD текстура/материал ----------
-    // Для лучшей читаемости можно поднять до 4096x2048
-    hudCanvas.width = 2048; 
-    hudCanvas.height = 1024;
-    composeHUD();
-
+    // ========= 3) Одна текстура — две панели (head + world) =========
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
     hudTexture.colorSpace = THREE.SRGBColorSpace;
     hudTexture.generateMipmaps = true;
@@ -128,89 +108,65 @@
 
     const hudMaterial = new THREE.MeshBasicMaterial({map:hudTexture, side:THREE.DoubleSide});
 
-    // Две панели: head-locked (для 2D) и world-locked (для VR)
+    // head-locked (для окна)
     const headPanel  = new THREE.Mesh(new THREE.PlaneGeometry(1.8,0.95), hudMaterial);
     headPanel.position.set(0,0,-1.05);
-    camera.add(headPanel);       // видна в окне
+    camera.add(headPanel);
     headPanel.visible = true;
 
+    // world-locked (для VR)
     const worldPanel = new THREE.Mesh(new THREE.PlaneGeometry(1.8,0.95), hudMaterial);
-    worldPanel.visible = false;
-    scene.add(worldPanel);
+    worldPanel.visible = false; scene.add(worldPanel);
 
-    // Расположение world-панели прямо перед взглядом
-    const tmpPos = new THREE.Vector3();
-    const tmpDir = new THREE.Vector3();
-    function placeWorldPanel(distance=1.6){
+    const tmpPos = new THREE.Vector3(), tmpDir = new THREE.Vector3();
+    function placeWorldPanel(dist=1.6){
       camera.getWorldPosition(tmpPos);
       camera.getWorldDirection(tmpDir);
-      tmpPos.add(tmpDir.multiplyScalar(distance));
+      tmpPos.add(tmpDir.multiplyScalar(dist));
       worldPanel.position.copy(tmpPos);
-      worldPanel.quaternion.copy(camera.quaternion); // лицом к тебе
+      worldPanel.quaternion.copy(camera.quaternion);
     }
 
-    // События XR: в VR показываем world-панель, в 2D — head-панель
+    // ========= 4) События XR и кнопки =========
     renderer.xr.addEventListener('sessionstart', ()=>{
-      headPanel.visible = false;
-      worldPanel.visible = true;
-      placeWorldPanel(1.6);
+      headPanel.visible = false; worldPanel.visible = true; placeWorldPanel(1.6);
       document.getElementById('btnPin').textContent = 'Pin to head';
     });
     renderer.xr.addEventListener('sessionend', ()=>{
-      worldPanel.visible = false;
-      headPanel.visible = true;
+      worldPanel.visible = false; headPanel.visible = true;
       document.getElementById('btnPin').textContent = 'Unpin (world)';
     });
 
-    // UI: Pin/Unpin (переключение режимов в текущем состоянии)
     document.getElementById('btnPin').onclick = ()=>{
       const inVR = renderer.xr.isPresenting;
       if(inVR){
-        const worldOn = worldPanel.visible;
-        if(worldOn){ // прикрутить к голове
-          worldPanel.visible = false;
-          headPanel.visible = true;
-          document.getElementById('btnPin').textContent = 'Unpin (world)';
-        }else{       // открутить от головы
-          headPanel.visible = false;
-          worldPanel.visible = true;
-          placeWorldPanel(1.6);
-          document.getElementById('btnPin').textContent = 'Pin to head';
-        }
+        if(worldPanel.visible){ worldPanel.visible=false; headPanel.visible=true; document.getElementById('btnPin').textContent='Unpin (world)'; }
+        else { headPanel.visible=false; worldPanel.visible=true; placeWorldPanel(1.6); document.getElementById('btnPin').textContent='Pin to head'; }
       }else{
-        // В 2D просто переключаем видимость
         headPanel.visible = !headPanel.visible;
         worldPanel.visible = !headPanel.visible;
         if(worldPanel.visible) placeWorldPanel(1.6);
         document.getElementById('btnPin').textContent = worldPanel.visible ? 'Pin to head' : 'Unpin (world)';
       }
     };
-    // Recenter: поставить world-панель перед взглядом
     document.getElementById('btnRecenter').onclick = ()=> placeWorldPanel(1.6);
-    // Fit: ближе/крупнее
     document.getElementById('btnFit').onclick = ()=>{
-      const target = worldPanel.visible ? worldPanel : headPanel;
-      target.position.set(0, target===worldPanel?1.6:0, -(target===worldPanel?1.2:0.95));
-      target.scale.set(1.1,1.1,1);
+      const t = worldPanel.visible ? worldPanel : headPanel;
+      t.position.set(0, worldPanel.visible?1.6:0, -(worldPanel.visible?1.2:0.95));
+      t.scale.set(1.1,1.1,1);
     };
 
-    // Resize
     addEventListener('resize', ()=>{
       camera.aspect = innerWidth/innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // Рендер-цикл (можно ограничить частоту обновления HUD до 30 FPS, если нужно)
-    let lastHUD = 0;
-    renderer.setAnimationLoop((t)=>{
-      box.rotation.y = t/1000;
-
-      if (t - lastHUD > 33) { // ~30 FPS для HUD текстуры
-        composeHUD();
-        hudTexture.needsUpdate = true;
-        lastHUD = t;
-      }
+    // ========= 5) Рендер-цикл (HUD обновляется здесь же) =========
+    renderer.setAnimationLoop((timeMS)=>{
+      cube.rotation.y = timeMS/1000;
+      renderHUD(timeMS);
+      hudTexture.needsUpdate = true;
       renderer.render(scene, camera);
     });
   </script>
