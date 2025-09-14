@@ -8,7 +8,7 @@
   <style>
     :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
     html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-    /* Верхний бар — по центру */
+    /* Верхний бар — по центру, виден и в VR (DOM overlay) */
     #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;align-items:center;flex-wrap:wrap;pointer-events:auto}
     #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
     #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
@@ -32,25 +32,24 @@
       <button id="btnRecenter" class="small">Recenter</button>
     </div>
   </div>
-  <!-- Док-слот под VR-кнопку (центр-низ) -->
   <div id="vrDock"></div>
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ---------- HUD ----------
-    const HUD_W = 1536, HUD_H = 864;
+    // ---------- HUD canvas ----------
+    const HUD_W = 1536, HUD_H = 864;          // 2048x1024 можно, но дороже
     const PAD = 28;
     const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
     const g = hudCanvas.getContext('2d');
 
-    // ---------- анимация ----------
-    const anim = {t:0, dur:1200, start:0, active:false};
+    // ---------- анимация заполнения ----------
+    const anim = {dur:1200, start:0, active:false};
     const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
     function triggerAnim(now){ anim.start=now; anim.active=true; }
 
-    // ---------- данные (как согласовали) ----------
+    // ---------- данные паспортов (6 карточек, 3×2) ----------
     const PASSPORTS = {
       "1I": {
         id:"1I", name:"ʻOumuamua",
@@ -82,7 +81,7 @@
     };
     let current = PASSPORTS["1I"];
 
-    // ---------- утилиты отрисовки (как раньше) ----------
+    // ---------- утилиты рисования ----------
     function frame(ctx,x,y,w,h,title){
       ctx.save();
       ctx.fillStyle='#08141c'; ctx.globalAlpha=0.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
@@ -222,7 +221,7 @@
     renderer.xr.enabled = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    // Включаем DOM Overlay, чтобы верхние кнопки были видны в VR
+    // DOM overlay, чтобы верхние кнопки были видны в VR
     renderer.xr.setSessionInit({
       optionalFeatures: ['dom-overlay','local-floor','bounded-floor'],
       domOverlay: { root: document.body }
@@ -230,32 +229,24 @@
 
     document.body.appendChild(renderer.domElement);
 
-    // Кнопку VR рендерим в док снизу по центру
+    // VR-кнопка — вниз по центру
     const vrButton = VRButton.createButton(renderer);
-    vrButton.style.position = 'static';    // убираем инлайновый fixed
-    vrButton.style.padding  = '10px 14px';
-    vrButton.style.borderRadius = '10px';
+    vrButton.style.position='static';
+    vrButton.style.padding='10px 14px';
+    vrButton.style.borderRadius='10px';
     document.getElementById('vrDock').appendChild(vrButton);
 
     const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a);
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
-    // === Геометрия панели ===
+    // Геометрия панели (без translate — центр геометрии в (0,0,0))
     let CURVED = true, RADIUS = 1.2, PANEL_W = 2.1, PANEL_H = 1.25;
-
-    // Центрируем сегмент цилиндра: переносим геометрию так, чтобы
-    // точка середины поверхности совпала с (0,0,0) локальных координат.
     function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
       if(!curved) return new THREE.PlaneGeometry(w,h);
-      const arc = w/r;
+      const arc = w / r;
       const thetaStart = Math.PI/2 - arc/2;
-      const geo = new THREE.CylinderGeometry(r, r, h, 96, 1, true, thetaStart, arc);
-      const mid = thetaStart + arc/2;
-      const cx = r * Math.cos(mid);
-      const cz = r * Math.sin(mid);
-      geo.translate(-cx, 0, -cz);     // <-- ключ: сдвигаем к центру поверхности
-      return geo;
+      return new THREE.CylinderGeometry(r, r, h, 96, 1, true, thetaStart, arc);
     }
 
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
@@ -269,14 +260,14 @@
     const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
     scene.add(hudPanel);
 
-    // Ставим панель строго перед взглядом
+    // Ставим панель строго перед взглядом и поворачиваем лицом
     function placeInFront(dist=1.7){
+      camera.updateMatrixWorld(true);
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
       const pos = new THREE.Vector3().copy(camera.position).add(dir.multiplyScalar(dist));
       hudPanel.position.copy(pos);
-      hudPanel.quaternion.copy(camera.quaternion);
-      if (CURVED) hudPanel.rotateY(Math.PI); // изогнутую разворачиваем лицом
+      hudPanel.lookAt(camera.position);   // всегда к тебе лицом
     }
     placeInFront(1.7);
 
@@ -295,7 +286,7 @@
       btnCurve.textContent = CURVED ? 'Curved ON' : 'Curved OFF';
       hudPanel.geometry.dispose();
       hudPanel.geometry = buildPanelGeometry(CURVED);
-      placeInFront(1.7);               // снова центрируем после смены формы
+      placeInFront(1.7);
     };
     document.getElementById('btnRecenter').onclick = ()=> placeInFront(1.7);
 
@@ -306,14 +297,22 @@
       placeInFront(1.7);
     });
 
-    // цикл рендера
+    // Рендер-цикл (WebXR) + фоллбэк для обычного окна
     let last=0; const HUD_INTERVAL=1000/30;
     renderer.setAnimationLoop((t)=>{
       if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
       renderer.render(scene,camera);
     });
+    function animate(t){
+      if (!renderer.xr.isPresenting){
+        if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
+        renderer.render(scene,camera);
+        requestAnimationFrame(animate);
+      }
+    }
+    requestAnimationFrame(animate);
 
-    // стартовая анимация
+    // стартовая заливка
     triggerAnim(performance.now());
   </script>
 </body>
