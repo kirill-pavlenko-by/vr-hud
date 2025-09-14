@@ -8,14 +8,15 @@
 <style>
   :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-  /* Верхнее меню — всегда поверх (и в VR тоже через DOM Overlay) */
+  /* Верхнее меню — всегда поверх (включая WebXR Dom Overlay) */
   #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
   #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
   #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
   #ui button.active{background:#123040;border-color:#45c0d4;color:#dff8ff}
   #ui .small{padding:6px 10px}
+
   /* Кнопка входа в VR — снизу по центру */
-  #vrDock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:9999}
+  #vrDock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:9999}
   canvas{display:block}
 </style>
 </head>
@@ -27,17 +28,16 @@
       <button data-id="3I">3I/ATLAS</button>
     </div>
     <div class="seg">
-      <button id="btnCurve" class="small">Curved ON</button>
       <button id="btnRecenter" class="small">Recenter</button>
     </div>
   </div>
   <div id="vrDock"></div>
 
-  <!-- THREE -->
+  <!-- THREE (UMD) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
   <script>
-  /* ===== VR Button с DOM Overlay (всегда показывает верхнее меню в VR) ===== */
+  /* ===== VR Button с dom-overlay (required → fallback optional) ===== */
   function createVRButton(renderer, overlayRoot){
     const btn = document.createElement('button');
     btn.textContent='Enter VR';
@@ -61,7 +61,7 @@
 
     btn.addEventListener('click', async ()=>{
       if(session){ await session.end(); return; }
-      try {            // требуем DOM Overlay
+      try {            // требуем dom-overlay
         await startSession(true);
       } catch(e){      // fallback: optional
         try { await startSession(false); } catch(err){ console.warn(err); }
@@ -72,72 +72,62 @@
   </script>
 
   <script>
-  /* ===================== HUD CANVAS (2D → текстура в 3D) ===================== */
-  const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(28*SCALE);
+  /* ===================== HUD CANVAS ===================== */
+  const SCALE=1.5, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(28*SCALE);
   const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
   const g=hudCanvas.getContext('2d');
   const anim={dur:1200,start:0,active:false}; const easeOut=x=>1-Math.pow(1-x,3); const trigger=now=>{anim.start=now;anim.active=true;}
 
-  /* ====== Актуальные данные «паспортов» ====== */
-  const PASSPORTS = {
-    "1I": { // 1I/ʻOumuamua — видимый диапазон: эмиссий нет, прокси по отражённому свету
-      id: "1I",
-      name: "ʻOumuamua",
-      composition: [
-        { label: "Organics", value: 70 },
-        { label: "H₂O" , value: 3 },
-        { label: "CO",  value: 2 }
+  /* ===== Актуальные данные (видимый состав для 1I) ===== */
+  const PASSPORTS={
+    "1I":{ id:"1I", name:"ʻOumuamua",
+      composition:[
+        {label:"Organics (surface proxy)", value:70},
+        {label:"H₂O (UL, visible)", value:3},
+        {label:"CO (UL, visible)", value:2}
       ],
-      spectrum: [
-        { lambda: 388, label: "CN", val: 0.05 },
-        { lambda: 405, label: "C₃", val: 0.03 }
+      spectrum:[ // эмиссионные линии в целом не детектировались — оставляю крошечные «шумы»
+        {lambda:388,label:"CN",val:0.06},
+        {lambda:405,label:"C₃",val:0.04}
       ],
-      velocity:   { value: 26.30, max: 100, unit: "km/s", ticks: [0.25, 0.5, 0.75] },
-      mass:       { value: 0.10, unit: "rel." },
-      coolness:   { value: 92,   max: 100 },
-      reliability:{ measured: 0.10, upper: 0.20, inferred: 0.70 }
+      velocity:{value:26.30,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.10,unit:"rel."},
+      coolness:{value:92,max:100},
+      reliability:{measured:0.10,upper:0.20,inferred:0.70}
     },
-
-    "2I": { // 2I/Borisov — газообильная
-      id: "2I",
-      name: "Borisov",
-      composition: [
-        { label: "H₂O", value: 100 },
-        { label: "CO",  value: 150 }
+    "2I":{ id:"2I", name:"Borisov",
+      composition:[
+        {label:"H₂O", value:100},
+        {label:"CO", value:150}
       ],
-      spectrum: [
-        { lambda: 388,   label: "CN", val: 1.00 },
-        { lambda: 405,   label: "C₃", val: 0.55 },
-        { lambda: 516.5, label: "C₂", val: 0.70 }
+      spectrum:[
+        {lambda:388,label:"CN",val:1.00},
+        {lambda:405,label:"C₃",val:0.55},
+        {lambda:516.5,label:"C₂",val:0.70}
       ],
-      velocity:   { value: 32.70, max: 100, unit: "km/s", ticks: [0.25, 0.5, 0.75] },
-      mass:       { value: 0.55, unit: "rel." },
-      coolness:   { value: 85,   max: 100 },
-      reliability:{ measured: 0.70, upper: 0.10, inferred: 0.20 }
+      velocity:{value:32.70,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.55,unit:"rel."},
+      coolness:{value:85,max:100},
+      reliability:{measured:0.70,upper:0.10,inferred:0.20}
     },
-
-    // 3I/ATLAS в твоём UX — фактически C/2023 A3 (Tsuchinshan–ATLAS)
-    "3I": {
-      id: "3I",
-      name: "ATLAS (C/2023 A3)",
-      composition: [
-        { label: "H₂O", value: 120 },
-        { label: "CO₂", value: 110 }
+    "3I":{ id:"3I", name:"ATLAS (C/2023 A3)",
+      composition:[
+        {label:"H₂O", value:120},
+        {label:"CO₂", value:110}
       ],
-      spectrum: [
-        { lambda: 388,   label: "CN", val: 0.60 },
-        { lambda: 405,   label: "C₃", val: 0.40 },
-        { lambda: 516.5, label: "C₂", val: 0.70 }
+      spectrum:[
+        {lambda:388,label:"CN",val:0.60},
+        {lambda:405,label:"C₃",val:0.40},
+        {lambda:516.5,label:"C₂",val:0.70}
       ],
-      velocity:   { value: 70.00, max: 100, unit: "km/s", ticks: [0.25, 0.5, 0.75] },
-      mass:       { value: 0.35, unit: "rel." },
-      coolness:   { value: 78,   max: 100 },
-      reliability:{ measured: 0.55, upper: 0.15, inferred: 0.30 }
+      velocity:{value:63.00,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.35,unit:"rel."},
+      coolness:{value:78,max:100},
+      reliability:{measured:0.55,upper:0.15,inferred:0.30}
     }
   };
   let current=PASSPORTS["1I"];
 
-  /* === Отрисовка карточек === */
   function frame(ctx,x,y,w,h,title){
     ctx.save();
     ctx.fillStyle='#08141c'; ctx.globalAlpha=.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
@@ -145,6 +135,7 @@
     if(title){ ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,x+10,y+22*SCALE); }
     ctx.restore();
   }
+
   function capsules(ctx,x,y,w,h,rows,p){
     const top=26*SCALE, gap=18*SCALE, bh=(h-top-24*SCALE-gap*(rows.length-1))/rows.length;
     ctx.save(); ctx.translate(x,y);
@@ -171,6 +162,7 @@
     ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6*SCALE);
     ctx.restore();
   }
+
   function spectrum(ctx,x,y,w,h,lines,p){
     ctx.save(); ctx.translate(x,y);
     const ax=52*SCALE, ay=26*SCALE, gw=w-ax-16*SCALE, gh=h-ay-26*SCALE;
@@ -189,6 +181,7 @@
     ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+20*SCALE);
     ctx.restore();
   }
+
   function donut(ctx,x,y,w,h,value,max,unit,ticks=[],title=null,p=1){
     ctx.save(); ctx.translate(x,y);
     if(title){ ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,8,18*SCALE); }
@@ -200,12 +193,13 @@
     ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
     ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
     const shown=Math.abs(value)*p;
-    ctx.fillStyle='#aee8ff'; ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`; // немного меньше и без минуса
+    ctx.fillStyle='#aee8ff'; ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`; // ещё меньше и без минуса
     const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt,cx-tw/2,cy+10*SCALE);
     ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
     const pct=Math.round((shown/max)*100), sub=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(sub).width; ctx.fillText(sub,cx-stw/2,cy+30*SCALE);
     ctx.restore();
   }
+
   function massBar(ctx,x,y,w,h,val,p){
     ctx.save(); ctx.translate(x,y);
     ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Mass (estimate)',8,18*SCALE);
@@ -215,22 +209,45 @@
     ctx.fillRect(ax+20*SCALE, ay+gh-hh, gw-40*SCALE, hh);
     ctx.restore();
   }
+
+  /* Подписи внутри/над сегментами — ничего не вылезает за рамку */
   function reliabilityStack(ctx,x,y,w,h,r,p){
     ctx.save(); ctx.translate(x,y);
     ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Data reliability',8,18*SCALE);
     const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
     const total=Math.max(1e-6,r.measured+r.upper+r.inferred), m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
     const x0=ax+20*SCALE, barW=gw-40*SCALE, y0=ay+20*SCALE, bh=gh-40*SCALE;
+
     ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
-    let cur=x0; ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0,wm,bh); cur+=wm;
-    ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0,wu,bh); cur+=wu;
-    ctx.fillStyle='rgba(80,180,235,.55)';  const wi=barW*i; ctx.fillRect(cur,y0,wi,bh);
-    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
-    ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20*SCALE);
-    ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180*SCALE, y0+bh+20*SCALE);
-    ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380*SCALE, y0+bh+20*SCALE);
+
+    const parts=[
+      {w:barW*m, color:'rgba(120,240,255,.85)', label:`Measured: ${(m*100).toFixed(0)}%`},
+      {w:barW*u, color:'rgba(120,200,255,.65)', label:`Upper Limit: ${(u*100).toFixed(0)}%`},
+      {w:barW*i, color:'rgba(80,180,235,.55)',  label:`Inference: ${(i*100).toFixed(0)}%`}
+    ];
+
+    let cur=x0;
+    parts.forEach(pt=>{
+      ctx.fillStyle=pt.color; ctx.fillRect(cur,y0,pt.w,bh);
+      // подпись
+      const cx=cur+pt.w/2, cy=y0+bh/2;
+      ctx.fillStyle='#aee8ff';
+      let f=16*SCALE; ctx.font=`${Math.round(f)}px ui-monospace,monospace`;
+      const tw=ctx.measureText(pt.label).width;
+      if(pt.w<tw+20*SCALE){            // если узко — уменьшаем шрифт/поднимаем над баром
+        f=Math.max(12*SCALE, f*pt.w/(tw+24*SCALE));
+        ctx.font=`${Math.round(f)}px ui-monospace,monospace`;
+      }
+      if(pt.w>=ctx.measureText(pt.label).width+16*SCALE){
+        ctx.textAlign='center'; ctx.fillText(pt.label,cx,cy+f*.35);
+      }else{
+        ctx.textAlign='left'; ctx.fillText(pt.label, cur, y0-6*SCALE);
+      }
+      cur+=pt.w;
+    });
     ctx.restore();
   }
+
   function renderHUD(now){
     const p=anim.active?Math.min(1,(now-anim.start)/anim.dur):1, t=easeOut(p);
     if(p>=1&&anim.active) anim.active=false;
@@ -268,7 +285,7 @@
   </script>
 
   <script>
-  /* ===================== THREE / WEBXR ===================== */
+  /* ===================== THREE / WEBXR (без кривой панели) ===================== */
   const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   renderer.setSize(innerWidth,innerHeight);
@@ -283,32 +300,24 @@
 
   const holder=new THREE.Group(); scene.add(holder);
 
-  let CURVED=true, RADIUS=1.2, PANEL_W=2.1, PANEL_H=1.25;
+  // Всегда плоская панель перед пользователем
+  const PANEL_W=2.1, PANEL_H=1.25;
+  const hudPanel=new THREE.Mesh(new THREE.PlaneGeometry(PANEL_W,PANEL_H),
+                                new THREE.MeshBasicMaterial({side:THREE.DoubleSide}));
+  holder.add(hudPanel);
 
-  function makeGeom(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
-    if(!curved) return new THREE.PlaneGeometry(w,h);
-    // Центрированная дуга, «смотрит» на пользователя
-    const arc = w / r;                          // радианы
-    const thetaStart = Math.PI/2 - arc/2;       // центр дуги
-    const geo = new THREE.CylinderGeometry(r,r,h,96,1,true,thetaStart,arc);
-    geo.rotateY(Math.PI);                       // нормаль наружу к пользователю
-    return geo;
-  }
-
-  const hudPanel=new THREE.Mesh(makeGeom(CURVED),
-    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(hudCanvas), side:THREE.DoubleSide}));
-  const hudTex=hudPanel.material.map;
+  // Текстура из холста
+  const hudTex=new THREE.CanvasTexture(hudCanvas);
   hudTex.colorSpace=THREE.SRGBColorSpace;
   hudTex.generateMipmaps=false; hudTex.minFilter=THREE.LinearFilter; hudTex.magFilter=THREE.LinearFilter;
-  holder.add(hudPanel);
+  hudPanel.material.map=hudTex;
 
   function placeInFront(dist=1.7){
     camera.updateMatrixWorld(true);
+    holder.position.copy(camera.position);
     const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-    holder.position.copy(camera.position).addScaledVector(forward, dist);
-    // Поворачиваем панель лицом к камере — гарантированно по центру
-    holder.lookAt(new THREE.Vector3().copy(camera.position));
-    hudPanel.rotation.set(0,0,0);
+    holder.position.addScaledVector(forward, dist);
+    holder.quaternion.copy(camera.quaternion); // панель «смотрит» туда же, куда камера
   }
   placeInFront(1.7);
 
@@ -318,12 +327,6 @@
     document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active'); current=PASSPORTS[btn.dataset.id]; trigger(performance.now());
   });
-  document.getElementById('btnCurve').onclick=()=>{
-    CURVED=!CURVED;
-    document.getElementById('btnCurve').textContent=CURVED?'Curved ON':'Curved OFF';
-    hudPanel.geometry.dispose(); hudPanel.geometry=makeGeom(CURVED);
-    placeInFront(1.7);
-  };
   document.getElementById('btnRecenter').onclick=()=>placeInFront(1.7);
 
   addEventListener('resize', ()=>{
@@ -331,14 +334,15 @@
     renderer.setSize(innerWidth,innerHeight); placeInFront(1.7);
   });
 
+  // Рендер-цикл (WebXR-friendly)
   let last=0, HUD_INTERVAL=1000/30;
   renderer.setAnimationLoop((t)=>{
     if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
     renderer.render(scene,camera);
   });
 
+  // первичный запуск
   trigger(performance.now());
   </script>
 </body>
 </html>
-
