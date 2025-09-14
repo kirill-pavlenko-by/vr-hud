@@ -8,12 +8,15 @@
   <style>
     :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
     html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-    /* Центрированный верхний бар */
-    #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:10;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    /* Верхний бар — по центру */
+    #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;align-items:center;flex-wrap:wrap;pointer-events:auto}
     #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
     #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
     #ui button.active{background:#123040;border-color:#45c0d4;color:#dff8ff}
     #ui .small{padding:6px 10px}
+    /* Кнопка VR — вниз по центру */
+    #vrDock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:9999;pointer-events:none}
+    #vrDock > *{pointer-events:auto}
     canvas{display:block}
   </style>
 </head>
@@ -25,52 +28,53 @@
       <button data-id="3I">3I/ATLAS</button>
     </div>
     <div class="seg">
-      <button id="btnVR" class="small">Enter VR</button>
       <button id="btnCurve" class="small">Curved ON</button>
       <button id="btnRecenter" class="small">Recenter</button>
     </div>
   </div>
+  <!-- Док-слот под VR-кнопку (центр-низ) -->
+  <div id="vrDock"></div>
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ---------- HUD качество ----------
-    const HUD_W = 1536, HUD_H = 864;      // можно 2048×1024, если нужно острее
+    // ---------- HUD ----------
+    const HUD_W = 1536, HUD_H = 864;
     const PAD = 28;
     const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
     const g = hudCanvas.getContext('2d');
 
-    // ---------- easing / анимация ----------
+    // ---------- анимация ----------
     const anim = {t:0, dur:1200, start:0, active:false};
     const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
     function triggerAnim(now){ anim.start=now; anim.active=true; }
 
-    // ---------- данные паспортов ----------
+    // ---------- данные (как согласовали) ----------
     const PASSPORTS = {
-      "1I": { // 1I/ʻOumuamua
+      "1I": {
         id:"1I", name:"ʻOumuamua",
-        composition:[ {label:"H₂O (UL)",value:2}, {label:"CO (UL)",value:2} ], // UL = upper limits
+        composition:[ {label:"H₂O (UL)",value:2}, {label:"CO (UL)",value:2} ],
         spectrum:[ {lambda:388,label:"CN",val:0.06}, {lambda:405,label:"C₃",val:0.04} ],
-        velocity:{ value:26.5, max:100, unit:"km/s", ticks:[.25,.5,.75] },  // v_inf
+        velocity:{ value:26.5, max:100, unit:"km/s", ticks:[.25,.5,.75] },
         mass:{ value:0.10, unit:"rel." },
         coolness:{ value:92, max:100 },
         reliability:{ measured:0.20, upper:0.20, inferred:0.60 }
       },
-      "2I": { // 2I/Borisov
+      "2I": {
         id:"2I", name:"Borisov",
-        composition:[ {label:"H₂O",value:100}, {label:"CO",value:150} ],  // CO ~150% от воды
+        composition:[ {label:"H₂O",value:100}, {label:"CO",value:150} ],
         spectrum:[ {lambda:388,label:"CN",val:1.00}, {lambda:405,label:"C₃",val:0.55}, {lambda:516.5,label:"C₂",val:0.70} ],
-        velocity:{ value:32.4, max:100, unit:"km/s", ticks:[.25,.5,.75] }, // v_inf
+        velocity:{ value:32.4, max:100, unit:"km/s", ticks:[.25,.5,.75] },
         mass:{ value:0.55, unit:"rel." },
         coolness:{ value:85, max:100 },
         reliability:{ measured:0.70, upper:0.10, inferred:0.20 }
       },
-      "3I": { // 3I/ATLAS (2025)
+      "3I": {
         id:"3I", name:"ATLAS",
-        composition:[ {label:"H₂O",value:120}, {label:"CO₂",value:110} ], // высокие H2O & CO2 — уточним по телескопам
+        composition:[ {label:"H₂O",value:120}, {label:"CO₂",value:110} ],
         spectrum:[ {lambda:388,label:"CN",val:0.60}, {lambda:405,label:"C₃",val:0.40}, {lambda:516.5,label:"C₂",val:0.70} ],
-        velocity:{ value:58.0, max:100, unit:"km/s", ticks:[.25,.5,.75] }, // v_inf (прогноз), perihelion ~68
+        velocity:{ value:58.0, max:100, unit:"km/s", ticks:[.25,.5,.75] },
         mass:{ value:0.35, unit:"rel." },
         coolness:{ value:78, max:100 },
         reliability:{ measured:0.55, upper:0.15, inferred:0.30 }
@@ -78,7 +82,7 @@
     };
     let current = PASSPORTS["1I"];
 
-    // ---------- утилиты отрисовки ----------
+    // ---------- утилиты отрисовки (как раньше) ----------
     function frame(ctx,x,y,w,h,title){
       ctx.save();
       ctx.fillStyle='#08141c'; ctx.globalAlpha=0.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
@@ -86,30 +90,24 @@
       if(title){ ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(title, x+10, y+22); }
       ctx.restore();
     }
-    // 1) Composition capsules (с прогрессом p)
     function capsules(ctx,x,y,w,h,rows,p){
       const top=26, gap=18, bh=(h-top-24 - gap*(rows.length-1))/rows.length;
-      const r=Math.min(14,bh/2);
       ctx.save(); ctx.translate(x,y);
       rows.forEach((row,i)=>{
         const yy=top + i*(bh+gap);
-        const perc=Math.max(0,Math.min(1,row.value/150)); // норм. к 150
+        const perc=Math.max(0,Math.min(1,row.value/150));
         const rx=90, rw=Math.max(8,(w-120)*perc*p), rh=bh;
-
-        // grid
         ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
         for(let gx=0; gx<w-100; gx+=80){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
-
         const grad=ctx.createLinearGradient(0,yy,w-100,yy);
         grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
         ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
-
+        const r=Math.min(14,rh/2);
         ctx.beginPath();
         ctx.moveTo(rx+r,yy); ctx.lineTo(rx+rw-r,yy); ctx.quadraticCurveTo(rx+rw,yy,rx+rw,yy+r);
         ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
         ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
         ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
-
         ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.textAlign='left';
         ctx.fillText(row.label, 8, yy+rh*0.68);
         ctx.textAlign='right'; ctx.fillText((row.value*p).toFixed( (row.value<10)?1:0 ), rx+rw, yy+rh*0.68); ctx.textAlign='left';
@@ -118,7 +116,6 @@
       ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6);
       ctx.restore();
     }
-    // 2) Emission spectrum (растущие пики)
     function spectrum(ctx,x,y,w,h,lines,p){
       ctx.save(); ctx.translate(x,y);
       const ax=52, ay=26, gw=w-ax-16, gh=h-ay-26;
@@ -137,7 +134,6 @@
       ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace'; ctx.fillText('λ, nm', ax+gw-40, ay+gh+20);
       ctx.restore();
     }
-    // 3) Donut generic (анимированное наполнение)
     function donut(ctx,x,y,w,h, value, max, unit, ticks=[], titleLine=null,p=1){
       ctx.save(); ctx.translate(x,y);
       if(titleLine){ ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(titleLine,8,18); }
@@ -153,7 +149,6 @@
       ctx.font='16px ui-monospace,monospace'; const pct=Math.round((shown/max)*100), subt=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(subt).width; ctx.fillText(subt, cx-stw/2, cy+30);
       ctx.restore();
     }
-    // 4) Mass bar (аним.)
     function massBar(ctx,x,y,w,h,val,p){
       ctx.save(); ctx.translate(x,y);
       ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Mass (estimate)',8,18);
@@ -164,7 +159,6 @@
       ctx.fillRect(ax+20, ay+gh-hh, gw-40, hh);
       ctx.restore();
     }
-    // 5) Data reliability stacked (аним.)
     function reliabilityStack(ctx,x,y,w,h, r,p){
       ctx.save(); ctx.translate(x,y);
       ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Data reliability',8,18);
@@ -184,7 +178,6 @@
       ctx.restore();
     }
 
-    // ---------- компоновка 3×2 с анимацией ----------
     function renderHUD(now){
       const progress = anim.active ? Math.min(1, (now-anim.start)/anim.dur) : 1;
       const p = easeOutCubic(progress);
@@ -228,18 +221,41 @@
     renderer.setSize(innerWidth, innerHeight);
     renderer.xr.enabled = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+    // Включаем DOM Overlay, чтобы верхние кнопки были видны в VR
+    renderer.xr.setSessionInit({
+      optionalFeatures: ['dom-overlay','local-floor','bounded-floor'],
+      domOverlay: { root: document.body }
+    });
+
     document.body.appendChild(renderer.domElement);
-    document.getElementById('btnVR').replaceWith(VRButton.createButton(renderer));
+
+    // Кнопку VR рендерим в док снизу по центру
+    const vrButton = VRButton.createButton(renderer);
+    vrButton.style.position = 'static';    // убираем инлайновый fixed
+    vrButton.style.padding  = '10px 14px';
+    vrButton.style.borderRadius = '10px';
+    document.getElementById('vrDock').appendChild(vrButton);
 
     const scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a);
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
+    // === Геометрия панели ===
     let CURVED = true, RADIUS = 1.2, PANEL_W = 2.1, PANEL_H = 1.25;
+
+    // Центрируем сегмент цилиндра: переносим геометрию так, чтобы
+    // точка середины поверхности совпала с (0,0,0) локальных координат.
     function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
       if(!curved) return new THREE.PlaneGeometry(w,h);
-      const arc=w/r, thetaStart=Math.PI/2 - arc/2;
-      return new THREE.CylinderGeometry(r,r,h,64,1,true,thetaStart,arc);
+      const arc = w/r;
+      const thetaStart = Math.PI/2 - arc/2;
+      const geo = new THREE.CylinderGeometry(r, r, h, 96, 1, true, thetaStart, arc);
+      const mid = thetaStart + arc/2;
+      const cx = r * Math.cos(mid);
+      const cz = r * Math.sin(mid);
+      geo.translate(-cx, 0, -cz);     // <-- ключ: сдвигаем к центру поверхности
+      return geo;
     }
 
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
@@ -253,19 +269,18 @@
     const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
     scene.add(hudPanel);
 
-    // Функция: поставить панель строго перед камерой и «смотреть» на пользователя
+    // Ставим панель строго перед взглядом
     function placeInFront(dist=1.7){
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
       const pos = new THREE.Vector3().copy(camera.position).add(dir.multiplyScalar(dist));
       hudPanel.position.copy(pos);
-      // ориентируем как камера, а затем (для изогнутой) разворачиваем на π
       hudPanel.quaternion.copy(camera.quaternion);
-      if (CURVED) hudPanel.rotateY(Math.PI);
+      if (CURVED) hudPanel.rotateY(Math.PI); // изогнутую разворачиваем лицом
     }
     placeInFront(1.7);
 
-    // UI — выбор кометы + кнопки
+    // UI
     document.getElementById('cometButtons').addEventListener('click', (e)=>{
       const btn = e.target.closest('button[data-id]'); if(!btn) return;
       document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
@@ -280,7 +295,7 @@
       btnCurve.textContent = CURVED ? 'Curved ON' : 'Curved OFF';
       hudPanel.geometry.dispose();
       hudPanel.geometry = buildPanelGeometry(CURVED);
-      placeInFront(1.7);   // <-- ключевая правка: заново центрируем
+      placeInFront(1.7);               // снова центрируем после смены формы
     };
     document.getElementById('btnRecenter').onclick = ()=> placeInFront(1.7);
 
@@ -291,7 +306,7 @@
       placeInFront(1.7);
     });
 
-    // цикл рендера (HUD обновляем ~30 FPS)
+    // цикл рендера
     let last=0; const HUD_INTERVAL=1000/30;
     renderer.setAnimationLoop((t)=>{
       if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
