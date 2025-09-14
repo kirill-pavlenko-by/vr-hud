@@ -1,170 +1,161 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8" />
-<title>VR HUD — DIAG</title>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
-<meta name="theme-color" content="#04060a">
-<style>
-  html,body{margin:0;height:100%;background:#04060a;color:#aee8ff;font-family:ui-monospace,Consolas,Monaco,monospace}
-  #log{position:fixed;left:12px;bottom:12px;z-index:20;max-width:50vw}
-  .ok{color:#80ff8a}.warn{color:#ffd166}.err{color:#ff6b6b}
-  #ui{position:fixed;left:12px;bottom:64px;z-index:10}
-  #ui button{padding:6px 10px;margin-right:8px}
-  canvas{display:block}
-</style>
+  <meta charset="utf-8" />
+  <title>VR HUD — Three.js WebXR</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#04060a">
+  <style>
+    html,body{margin:0;height:100%;background:#04060a;color:#aee8ff;font-family:ui-monospace,Consolas,Monaco,monospace}
+    #ui{position:fixed;left:12px;bottom:12px;z-index:10}
+    #ui button{padding:6px 10px;margin-right:8px}
+    .hidden{position:absolute;left:-9999px;top:-9999px;visibility:hidden}
+    canvas{display:block}
+  </style>
 </head>
 <body>
+  <!-- Скрытые канвасы-источники (замени ID на свои реальные при желании) -->
+  <div class="hidden">
+    <canvas id="cComp"  width="640" height="360"></canvas>
+    <canvas id="cSpec"  width="640" height="360"></canvas>
+    <canvas id="cSpeed" width="640" height="360"></canvas>
+  </div>
 
-<div id="ui">
-  <button onclick="enterVR()">Enter VR</button>
-  <button onclick="location.reload()">Reload</button>
-</div>
-<div id="log"></div>
+  <div id="ui">
+    <button id="btnVR">Enter VR</button>
+    <button id="btnRecenter">[R] Recenter</button>
+    <button id="btnFit">[F] Fit panel</button>
+  </div>
 
-<script>
-const log = (msg, cls='ok')=>{
-  const d=document.createElement('div'); d.className=cls; d.textContent=msg;
-  document.getElementById('log').appendChild(d);
-  console.log(msg);
-};
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+    import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-// 0) Проверка WebGL
-(function(){
-  const gl = document.createElement('canvas').getContext('webgl') || document.createElement('canvas').getContext('experimental-webgl');
-  if(gl) log('WebGL: OK'); else log('WebGL: НЕТ (включи аппаратное ускорение / отключи строгие блокировщики)', 'err');
-})();
+    // ---------- 1) Настройки HUD ----------
+    const SOURCE_CANVASES = ['cComp','cSpec','cSpeed'];  // ← впиши сюда свои ID при необходимости
+    const GRID_COLS = 3, GRID_ROWS = 1, PAD = 40;
 
-// 1) Загружаем A-Frame c jsDelivr, при неудаче — с unpkg
-function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=()=>res(src);s.onerror=()=>rej(src);document.head.appendChild(s);});}
+    const hudCanvas = document.createElement('canvas');
+    const hudCtx = hudCanvas.getContext('2d');
 
-(async ()=>{
-  try{
-    log('Пробую загрузить A-Frame с jsDelivr…','warn');
-    await loadScript('https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js');
-    log('A-Frame с jsDelivr: OK');
-  }catch(e){
-    log('A-Frame с jsDelivr НЕ загрузился','err');
-  }
-  if(!window.AFRAME){
-    try{
-      log('Пробую загрузить A-Frame с unpkg…','warn');
-      await loadScript('https://unpkg.com/aframe@1.5.0/dist/aframe.min.js');
-      log('A-Frame с unpkg: OK');
-    }catch(e){
-      log('A-Frame с unpkg НЕ загрузился','err');
+    function drawPlaceholder(ctx,w,h,label){
+      ctx.fillStyle='#0a1018'; ctx.fillRect(0,0,w,h);
+      ctx.strokeStyle='#00ff66'; ctx.lineWidth=2; ctx.setLineDash([8,6]);
+      ctx.strokeRect(3,3,w-6,h-6); ctx.setLineDash([]);
+      ctx.fillStyle='#aee8ff'; ctx.font='24px ui-monospace,monospace';
+      ctx.fillText(label,16,36);
+      for(let i=0;i<32;i++){
+        const x=16+i*((w-32)/32), bar=Math.sin(Date.now()*0.003+i)*0.5+0.5;
+        const bh=16+bar*(h-80);
+        ctx.fillStyle='#00ff66'; ctx.fillRect(x, h-24-bh, (w-32)/32*0.8, bh);
+      }
     }
-  }
 
-  if(window.AFRAME){
-    bootAframe();   // пошли по линии A-Frame
-  }else{
-    log('A-Frame недоступен. Включаю запасной рендер на Three.js…','warn');
-    bootThreeFallback();
-  }
-})();
+    function composeHUD(){
+      const W=hudCanvas.width, H=hudCanvas.height;
+      hudCtx.fillStyle='#04060a'; hudCtx.fillRect(0,0,W,H);
+      hudCtx.fillStyle='#00ff66'; hudCtx.font='bold 48px ui-monospace,monospace';
+      hudCtx.fillText('C:\\> INTERSTELLAR HUD // VR',48,88);
 
-// 2A) Линия A-Frame: создаём сцену, куб и HUD-панель (прикрепляем к камере)
-function bootAframe(){
-  log('A-Frame найден: '+AFRAME.version);
+      const cellW=Math.floor((W-PAD*(GRID_COLS+1))/GRID_COLS);
+      const cellH=Math.floor((H-140-PAD*(GRID_ROWS+1))/GRID_ROWS);
 
-  // добавляем сцену в DOM
-  const scene = document.createElement('a-scene');
-  scene.setAttribute('background','color: #04060a');
-  scene.setAttribute('renderer','colorManagement:true; physicallyCorrectLights:false');
-  scene.setAttribute('xr','enabled:true');
-  document.body.appendChild(scene);
+      SOURCE_CANVASES.forEach((id,idx)=>{
+        const col=idx%GRID_COLS, row=(idx/GRID_COLS|0);
+        const x=PAD+col*(cellW+PAD), y=120+PAD+row*(cellH+PAD);
+        const src=document.getElementById(id);
 
-  // риг и камера
-  const rig = document.createElement('a-entity');
-  rig.setAttribute('id','rig'); rig.setAttribute('position','0 1.6 0');
-  const cam = document.createElement('a-entity');
-  cam.setAttribute('id','cam'); cam.setAttribute('camera',''); cam.setAttribute('look-controls','pointerLockEnabled:false; mouseEnabled:true');
-  rig.appendChild(cam); scene.appendChild(rig);
+        hudCtx.save();
+        hudCtx.fillStyle='#071018'; hudCtx.fillRect(x-8,y-8,cellW+16,cellH+16);
+        hudCtx.strokeStyle='#00aa55'; hudCtx.lineWidth=2;
+        hudCtx.strokeRect(x-8.5,y-8.5,cellW+17,cellH+17);
 
-  // тестовый куб
-  const box = document.createElement('a-box');
-  box.setAttribute('position','0 1.6 -2'); box.setAttribute('color','#00ff66');
-  scene.appendChild(box);
-
-  // свет
-  const amb = document.createElement('a-entity');
-  amb.setAttribute('light','type:ambient; color:#5fffd0; intensity:0.2');
-  scene.appendChild(amb);
-
-  scene.addEventListener('loaded', ()=>{
-    log('A-Frame scene loaded');
-
-    // HUD-панель: плоская, как ребёнок камеры
-    const panel = document.createElement('a-entity');
-    panel.setAttribute('id','hudPanel');
-    panel.setAttribute('position','0 0 -1.0');
-    panel.setAttribute('rotation','0 0 0');
-    panel.setAttribute('hud-texture','width:1024; height:512; metersW:1.6; metersH:0.8');
-    cam.appendChild(panel);
-
-    // компонент текстуры
-    AFRAME.registerComponent('hud-texture',{
-      schema:{ width:{type:'int',default:1024}, height:{type:'int',default:512}, metersW:{type:'number',default:1.6}, metersH:{type:'number',default:0.8} },
-      init(){
-        const d=this.data, THREE=AFRAME.THREE;
-        // локальный холст
-        this.canvas=document.createElement('canvas'); this.canvas.width=d.width; this.canvas.height=d.height;
-        this.ctx=this.canvas.getContext('2d');
-        this.tex=new THREE.CanvasTexture(this.canvas);
-        this.mesh=new THREE.Mesh(new THREE.PlaneGeometry(d.metersW,d.metersH), new THREE.MeshBasicMaterial({map:this.tex, side:THREE.DoubleSide}));
-        this.el.object3D.add(this.mesh);
-        this.t0=performance.now();
-        this.draw(0); this.tex.needsUpdate=true; // первый кадр
-      },
-      draw(t){
-        const g=this.ctx, W=this.canvas.width, H=this.canvas.height;
-        g.fillStyle='#04060a'; g.fillRect(0,0,W,H);
-        g.fillStyle='#00ff66'; g.font='bold 42px ui-monospace,monospace';
-        g.fillText('C:\\> HUD ONLINE', 40, 72);
-        for(let i=0;i<48;i++){
-          const x=40+i*20, bar=(Math.sin((t/600)+i*0.4)*0.5+0.5)*360+20;
-          g.fillRect(x, H-40-bar, 12, bar);
+        if(src && src.width && src.height){
+          hudCtx.drawImage(src,x,y,cellW,cellH);
+        }else{
+          hudCtx.save(); hudCtx.translate(x,y);
+          drawPlaceholder(hudCtx,cellW,cellH,id || 'canvas');
+          hudCtx.restore();
         }
-        g.fillStyle='#aee8ff'; g.font='20px ui-monospace,monospace';
-        g.fillText('AFRAME '+AFRAME.version+'  |  '+new Date().toLocaleTimeString(), 40, H-28);
-      },
-      tick(t){ this.draw(t); this.tex.needsUpdate=true; }
+        hudCtx.restore();
+      });
+
+      hudCtx.fillStyle='#aee8ff'; hudCtx.font='20px ui-monospace,monospace';
+      hudCtx.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`,48,H-36);
+    }
+
+    // демо-анимация для заглушек (если реальных канвасов пока нет)
+    (function tickPlaceholders(){
+      ['cComp','cSpec','cSpeed'].forEach(id=>{
+        const c=document.getElementById(id); if(!c) return;
+        drawPlaceholder(c.getContext('2d'), c.width, c.height, id.toUpperCase());
+      });
+      requestAnimationFrame(tickPlaceholders);
+    })();
+
+    // ---------- 2) Three.js WebXR ----------
+    const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.getElementById('btnVR').replaceWith(VRButton.createButton(renderer));
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x04060a);
+
+    const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
+    camera.position.set(0,1.6,0);
+
+    // Тестовый куб, чтобы видеть сцену
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5,0.5,0.5),
+      new THREE.MeshBasicMaterial({color:0x00ff66})
+    );
+    box.position.set(0,1.6,-2);
+    scene.add(box);
+
+    // ---------- 3) HUD-панель (ребёнок камеры) ----------
+    hudCanvas.width = 2048;  // при желании 4096×2048 для мелкого текста
+    hudCanvas.height = 1024;
+    composeHUD();            // первый кадр, чтобы не было чёрного экрана
+
+    const hudTexture = new THREE.CanvasTexture(hudCanvas);
+    hudTexture.encoding = THREE.sRGBEncoding;
+
+    const hudMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.8, 0.95),         // физический размер панели (м)
+      new THREE.MeshBasicMaterial({map:hudTexture, transparent:false, side:THREE.DoubleSide})
+    );
+    hudMesh.position.set(0, 0, -1.05);            // прямо перед глазами
+    camera.add(hudMesh);                           // <<< ключевая строка
+    scene.add(camera);
+
+    // ---------- 4) Resize ----------
+    addEventListener('resize', ()=>{
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
     });
 
-    log('Готово: должен быть зелёный куб и HUD перед камерой');
-  });
+    // ---------- 5) UI-кнопки ----------
+    document.getElementById('btnRecenter').onclick = ()=>{
+      camera.position.set(0,1.6,0);
+    };
+    document.getElementById('btnFit').onclick = ()=>{
+      hudMesh.position.set(0,0,-0.95);
+      hudMesh.scale.set(1.1,1.1,1);
+    };
 
-  // кнопка Enter VR
-  window.enterVR = ()=>{ scene.enterVR(); };
-}
+    // ---------- 6) Рендер-цикл ----------
+    renderer.setAnimationLoop((t)=>{
+      // обновляем демо-куб и HUD-текстуру
+      box.rotation.y = t/1000;
+      composeHUD();
+      hudTexture.needsUpdate = true;
 
-// 2B) Линия резервная: Three.js (если A-Frame не загрузился)
-async function bootThreeFallback(){
-  try{
-    await loadScript('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js');
-    await loadScript('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js');
-  }catch(e){
-    log('Three.js тоже не загрузился. Похоже, CDN блокируется. Отключи VPN/AdBlock и обнови.', 'err');
-    return;
-  }
-  log('Three.js загружен: отображаю вращающийся куб','warn');
-
-  const W=innerWidth, H=innerHeight;
-  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
-  renderer.setSize(W,H); document.body.appendChild(renderer.domElement);
-  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04060a);
-  const camera=new THREE.PerspectiveCamera(70, W/H, 0.01, 50);
-  camera.position.set(0,1.6,0);
-
-  const geo=new THREE.BoxGeometry(0.5,0.5,0.5);
-  const mat=new THREE.MeshBasicMaterial({color:0x00ff66});
-  const cube=new THREE.Mesh(geo,mat); cube.position.set(0,1.6,-2); scene.add(cube);
-
-  function animate(t){ cube.rotation.y=t/1000; renderer.render(scene,camera); requestAnimationFrame(animate); }
-  requestAnimationFrame(animate);
-}
-
-</script>
+      renderer.render(scene, camera);
+    });
+  </script>
 </body>
 </html>
