@@ -24,14 +24,13 @@
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ========= 1) HUD-текстура (процедурная анимация) =========
-    // Можно поднять до 4096x2048 если текст мелкий (но следи за FPS на Quest 2)
-    const HUD_W = 2048, HUD_H = 1024;
+    // ========= 1) HUD-текстура =========
+    const HUD_W = 2048, HUD_H = 1024;               // поднимай до 4096x2048 при желании
     const hudCanvas = document.createElement('canvas'); hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
     const g = hudCanvas.getContext('2d');
 
     const COLS = 3, ROWS = 1, PAD = 40;
-    const titleFont = 48, labelFont = 24, footFont = 20; // кегли (px)
+    const titleFont = 48, labelFont = 24, footFont = 20;
     const panels = ["CCOMP","CSPEC","CSPEED"];
 
     function drawBars(ctx, w, h, t, seed=0){
@@ -40,7 +39,7 @@
       for(let i=0;i<N;i++){
         const x = 16 + i*((w-32)/N);
         const phase = i*0.37 + seed*1.13;
-        const amp = Math.sin(t*0.002 + phase)*0.5 + 0.5;               // [0..1]
+        const amp = Math.sin(t*0.002 + phase)*0.5 + 0.5;   // [0..1]
         const val = 16 + amp*(h-80);
         ctx.fillRect(x, h-24-val, barW, val);
       }
@@ -71,12 +70,15 @@
         g.fillStyle = '#aee8ff'; g.font = `${labelFont}px ui-monospace,monospace`;
         g.fillText(panels[idx], x+8, y+28);
 
-        // сами столбики (живут в том же кадре XR → не замирают)
+        // ВАЖНО: смещаем систему координат к началу ячейки
+        g.save();
+        g.translate(x, y);
         g.fillStyle = '#00ff66';
         drawBars(g, cellW, cellH, t, idx);
+        g.restore();
       }
 
-      // строка статуса
+      // футер
       g.fillStyle = '#aee8ff'; g.font = `${footFont}px ui-monospace,monospace`;
       g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
     }
@@ -94,11 +96,11 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
-    // тестовый куб (контроль сцены)
+    // тестовый куб
     const cube = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshBasicMaterial({color:0x00ff66}));
     cube.position.set(0,1.6,-2); scene.add(cube);
 
-    // ========= 3) Одна текстура — две панели (head + world) =========
+    // ========= 3) Одна текстура — две панели =========
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
     hudTexture.colorSpace = THREE.SRGBColorSpace;
     hudTexture.generateMipmaps = true;
@@ -127,7 +129,7 @@
       worldPanel.quaternion.copy(camera.quaternion);
     }
 
-    // ========= 4) События XR и кнопки =========
+    // ========= 4) XR события и кнопки =========
     renderer.xr.addEventListener('sessionstart', ()=>{
       headPanel.visible = false; worldPanel.visible = true; placeWorldPanel(1.6);
       document.getElementById('btnPin').textContent = 'Pin to head';
@@ -162,10 +164,10 @@
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // ========= 5) Рендер-цикл (HUD обновляется здесь же) =========
+    // ========= 5) Рендер-цикл =========
     renderer.setAnimationLoop((timeMS)=>{
       cube.rotation.y = timeMS/1000;
-      renderHUD(timeMS);
+      renderHUD(timeMS);                 // анимируем графики здесь же
       hudTexture.needsUpdate = true;
       renderer.render(scene, camera);
     });
