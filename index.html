@@ -34,14 +34,16 @@
     </a-entity>
 
     <!-- Панель HUD (изогнутая) -->
-    <a-entity id="hudPanel"
-              position="0 1.6 -1.6"
-              rotation="0 0 0"
-              hud-texture="
-                width:2048; height:1024;
-                metersW:1.6; metersH:0.8;
-                curved:true; radius:1.05;
-              ">
+    <a-entity <a-entity id="hudPanel"
+          position="0 1.6 -1.2"
+          rotation="0 0 0"
+          look-at="[camera]"
+          hud-texture="
+            width:2048; height:1024;
+            metersW:1.6; metersH:0.9;
+            curved:false; radius:1.05; distance:1.2;">
+</a-entity>
+
     </a-entity>
 
     <!-- Лазер для контроллера правой руки + курсор мыши -->
@@ -251,6 +253,7 @@
   </script>
 </body>
 </html>
+
 
 
 
