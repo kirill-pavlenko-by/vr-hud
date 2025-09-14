@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>VR HUD — A-Frame CanvasTexture Bridge (Quest 2)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+  <meta http-equiv="Permissions-Policy" content="xr-spatial-tracking=()">
+  <meta name="theme-color" content="#04060a">
+  <!-- A-Frame (WebXR включён по умолчанию в браузере Quest) -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    html, body {margin:0; height:100%; background:#04060a; color:#aee8ff; font-family:ui-monospace,Consolas,Monaco,monospace;}
+    .note {position:fixed; left:12px; bottom:12px; opacity:.8; font-size:12px; line-height:1.3;}
+    .hidden {position:absolute; left:-9999px; top:-9999px; visibility:hidden;}
+  </style>
+</head>
+<body>
+  <!-- (Необязательно) Твои исходные канвасы могут жить где угодно на странице.
+       Если они уже есть в твоём приложении — не дублируй этот блок.
+       Здесь показываю примеры-заглушки тем, у кого канвасов ещё нет. -->
+  <div class="hidden">
+    <canvas id="cComp"  width="640" height="360"></canvas>
+    <canvas id="cSpec"  width="640" height="360"></canvas>
+    <canvas id="cSpeed" width="640" height="360"></canvas>
+  </div>
+
+  <!-- Сцена VR -->
+  <a-scene renderer="colorManagement: true; physicallyCorrectLights: false"
+           background="color: #04060a"
+           xr="enabled: true">
+    <!-- Камера/риг -->
+    <a-entity id="rig" position="0 1.6 0">
+      <a-camera wasd-controls-enabled="false" look-controls="true"></a-camera>
+    </a-entity>
+
+    <!-- Панель HUD (изогнутая) -->
+    <a-entity id="hudPanel"
+              position="0 1.6 -1.6"
+              rotation="0 0 0"
+              hud-texture="
+                width:2048; height:1024;
+                metersW:1.6; metersH:0.8;
+                curved:true; radius:1.05;
+              ">
+    </a-entity>
+
+    <!-- Лазер для контроллера правой руки + курсор мыши -->
+    <a-entity laser-controls="hand: right"></a-entity>
+    <a-entity cursor="rayOrigin: mouse"></a-entity>
+
+    <!-- Лёгкая подсветка/атмосфера -->
+    <a-entity light="type: ambient; color: #5fffd0; intensity: 0.15"></a-entity>
+    <a-entity light="type: point; color: #00ffaa; intensity: 0.3; distance: 5" position="0 1.6 -1.6"></a-entity>
+  </a-scene>
+
+  <div class="note">
+    VR HUD<br>
+    <span style="color:#ff6b6b">[R]</span> радиус кривизны &nbsp;|&nbsp;
+    <span style="color:#ffd166">[F]</span> плоская/изогнутая &nbsp;|&nbsp;
+    <span style="color:#aee8ff">[±]</span> дистанция панели
+  </div>
+
+  <script>
+    // === Настрой: перечисли ID твоих исходных канвасов (они уже есть в твоём UI) ===
+    const SOURCE_CANVASES = ['cComp','cSpec','cSpeed']; // добавь свои: 'cMass','cCool','cReliab', ...
+    // Параметры сетки композиции на итоговой текстуре:
+    const GRID_COLS = 3, GRID_ROWS = 1;   // 3 графика в ряд; при большем числе — увеличь rows/cols
+    const PAD = 40;                        // внутренние отступы на текстуре
+
+    // Итоговый HUD-холст (текстура для VR)
+    const hudCanvas = document.createElement('canvas');
+    const hudCtx    = hudCanvas.getContext('2d');
+
+    // Заглушечный рендер для тех, у кого исходных канвасов ещё нет:
+    function drawPlaceholder(ctx, w, h, label) {
+      ctx.fillStyle = '#0a1018';
+      ctx.fillRect(0,0,w,h);
+      ctx.strokeStyle = '#00ff66'; ctx.lineWidth = 2; ctx.setLineDash([8,6]);
+      ctx.strokeRect(3,3,w-6,h-6); ctx.setLineDash([]);
+      ctx.fillStyle = '#aee8ff'; ctx.font = '24px ui-monospace,monospace';
+      ctx.fillText(label, 16, 36);
+      // псевдо-спектр
+      for (let i=0;i<32;i++){
+        const x = 16 + i*((w-32)/32), bar = Math.sin(Date.now()*0.003 + i)*0.5+0.5;
+        const bh = 16 + bar*(h-80);
+        ctx.fillStyle = '#00ff66';
+        ctx.fillRect(x, h-24-bh, (w-32)/32*0.8, bh);
+      }
+    }
+
+    // Склейка: копируем твои канвасы в общий hudCanvas
+    function composeHUD() {
+      const W = hudCanvas.width, H = hudCanvas.height;
+      hudCtx.fillStyle = '#04060a';
+      hudCtx.fillRect(0,0,W,H);
+
+      // Заголовок (DOS/RETRO)
+      hudCtx.fillStyle = '#00ff66';
+      hudCtx.font = 'bold 48px ui-monospace,monospace';
+      hudCtx.fillText('C:\\> INTERSTELLAR HUD // VR', 48, 88);
+
+      const cellW = Math.floor((W - PAD*(GRID_COLS+1)) / GRID_COLS);
+      const cellH = Math.floor((H - 140 - PAD*(GRID_ROWS+1)) / GRID_ROWS);
+
+      SOURCE_CANVASES.forEach((id, idx) => {
+        const col = idx % GRID_COLS;
+        const row = Math.floor(idx / GRID_COLS);
+        const x = PAD + col*(cellW + PAD);
+        const y = 120 + PAD + row*(cellH + PAD);
+        const src = document.getElementById(id);
+
+        hudCtx.save();
+        // ячейка фон/рамка
+        hudCtx.fillStyle = '#071018';
+        hudCtx.fillRect(x-8, y-8, cellW+16, cellH+16);
+        hudCtx.strokeStyle = '#00aa55';
+        hudCtx.lineWidth = 2;
+        hudCtx.strokeRect(x-8.5, y-8.5, cellW+17, cellH+17);
+
+        if (src && src.width && src.height) {
+          hudCtx.drawImage(src, x, y, cellW, cellH);
+        } else {
+          const sub = hudCtx; sub.save(); sub.translate(x,y);
+          drawPlaceholder(sub, cellW, cellH, id || 'canvas');
+          sub.restore();
+        }
+        hudCtx.restore();
+      });
+
+      // строка статуса
+      hudCtx.fillStyle = '#aee8ff';
+      hudCtx.font = '20px ui-monospace,monospace';
+      const t = new Date().toLocaleTimeString();
+      hudCtx.fillText(`STATUS: ONLINE  |  ${t}`, 48, H-36);
+    }
+
+    // Инициализация заглушек (если твоих канвасов нет в DOM — рисуем туда что-то динамическое)
+    function tickPlaceholders(){
+      ['cComp','cSpec','cSpeed'].forEach((id,i)=>{
+        const c = document.getElementById(id);
+        if (!c) return;
+        const g = c.getContext('2d');
+        drawPlaceholder(g, c.width, c.height, id.toUpperCase());
+      });
+      requestAnimationFrame(tickPlaceholders);
+    }
+    tickPlaceholders();
+
+    // === A-Frame компонент: создаёт VR-панель и обновляет её текстуру из hudCanvas ===
+    AFRAME.registerComponent('hud-texture', {
+      schema: {
+        width: {type:'int', default:2048},
+        height:{type:'int', default:1024},
+        metersW:{type:'number', default:1.6},
+        metersH:{type:'number', default:0.8},
+        curved: {type:'boolean', default:true},
+        radius: {type:'number', default:1.05}, // метры (кривизна панели)
+        distance:{type:'number', default:1.6}
+      },
+      init: function(){
+        const d = this.data;
+        hudCanvas.width = d.width; hudCanvas.height = d.height;
+
+        // Текстура из Canvas
+        const THREE = AFRAME.THREE;
+        this.tex = new THREE.CanvasTexture(hudCanvas);
+        this.tex.encoding = THREE.sRGBEncoding;
+        const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent:false, side: THREE.DoubleSide });
+
+        // Создаём плоскость ИЛИ цилиндр (изогнутую панель)
+        if (d.curved) {
+          // угол дуги рассчитываем из ширины в метрах и радиуса
+          const arc = d.metersW / d.radius; // в радианах
+          const geo = new THREE.CylinderGeometry(d.radius, d.radius, d.metersH, 64, 1, true,
+                                                 Math.PI/2 - arc/2, arc);
+          this.mesh = new THREE.Mesh(geo, mat);
+          this.mesh.rotation.y = Math.PI; // лицевой стороной к камере
+        } else {
+          const geo = new THREE.PlaneGeometry(d.metersW, d.metersH);
+          this.mesh = new THREE.Mesh(geo, mat);
+        }
+
+        // Позиция прямо перед камерой на указанной дистанции
+        this.el.object3D.add(this.mesh);
+        const rig = document.querySelector('#rig');
+        if (rig) {
+          const p = this.el.object3D.position;
+          p.set(0, 1.6, -this.data.distance);
+        }
+
+        // Горячие клавиши: R = радиус±, F = flat/curve, +/- = дистанция
+        window.addEventListener('keydown', (e)=>{
+          if (e.key === 'r' || e.key === 'R') {
+            this.data.radius = Math.max(0.7, Math.min(2.0, this.data.radius + (e.shiftKey?-0.05:0.05)));
+            this.rebuild();
+          } else if (e.key === 'f' || e.key === 'F') {
+            this.data.curved = !this.data.curved;
+            this.rebuild();
+          } else if (e.key === '+') {
+            this.data.distance = Math.max(0.8, this.data.distance - 0.1);
+            this.el.object3D.position.set(0,1.6,-this.data.distance);
+          } else if (e.key === '-') {
+            this.data.distance = Math.min(3.0, this.data.distance + 0.1);
+            this.el.object3D.position.set(0,1.6,-this.data.distance);
+          }
+        });
+      },
+      rebuild: function(){
+        const THREE = AFRAME.THREE;
+        const d = this.data;
+        // убрать старую геометрию
+        if (this.mesh) {
+          this.el.object3D.remove(this.mesh);
+          this.mesh.geometry.dispose();
+          this.mesh.material.dispose();
+          const mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent:false, side: THREE.DoubleSide });
+          if (d.curved) {
+            const arc = d.metersW / d.radius;
+            const geo = new THREE.CylinderGeometry(d.radius, d.radius, d.metersH, 64, 1, true,
+                                                   Math.PI/2 - arc/2, arc);
+            this.mesh = new THREE.Mesh(geo, mat);
+            this.mesh.rotation.y = Math.PI;
+          } else {
+            const geo = new THREE.PlaneGeometry(d.metersW, d.metersH);
+            this.mesh = new THREE.Mesh(geo, mat);
+          }
+          this.el.object3D.add(this.mesh);
+        }
+      },
+      tick: function(){
+        // 1) Сначала перерисовываем твои графики (они уже анимируются сами)
+        // 2) Склеиваем в hudCanvas:
+        composeHUD();
+        // 3) Обновляем текстуру:
+        this.tex.needsUpdate = true;
+      }
+    });
+
+    // === Если открываешь этот файл отдельно от твоего приложения ===
+    // можно периодически имитировать обновление любого из исходных канвасов:
+    setInterval(()=>{
+      const c = document.getElementById('cComp');
+      if (!c) return;
+      const g = c.getContext('2d');
+      // мини-анимация «скан-линий»
+      const h = c.height;
+      g.fillStyle = 'rgba(0,255,102,0.06)';
+      const y = (Date.now()/16|0)%h;
+      g.fillRect(0,y, c.width, 2);
+    }, 60);
+  </script>
+</body>
+</html>
