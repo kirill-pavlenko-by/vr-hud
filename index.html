@@ -1,263 +1,230 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — Comet Passport (bars • spectrum • donut)</title>
+  <title>VR HUD — Interstellar Comet Passports (1I • 2I • 3I)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
   <style>
-    html,body{margin:0;height:100%;background:#04060a;color:#aee8ff;font-family:ui-monospace,Consolas,Monaco,monospace}
-    #ui{position:fixed;left:12px;bottom:12px;z-index:10}
-    #ui button{padding:6px 10px;margin-right:8px}
+    :root{--bg:#04060a;--panel:#08141c;--green:#00ff66;--mint:#aee8ff;--grid:#00aa55}
+    html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
+    #ui{position:fixed;left:12px;top:12px;z-index:10;display:flex;gap:8px;align-items:center}
+    #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px;border-radius:10px}
+    #ui button{padding:6px 10px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
+    #ui button.active{background:#123040;border-color:#45c0d4;color:#dff8ff}
+    #ui .small{padding:6px 8px}
     canvas{display:block}
   </style>
 </head>
 <body>
   <div id="ui">
-    <button id="btnVR">Enter VR</button>
-    <button id="btnCurve">Curved ON</button>
-    <button id="btnRecenter">Recenter</button>
+    <div class="seg" id="cometButtons">
+      <button data-id="1I" class="active">1I/‘Oumuamua</button>
+      <button data-id="2I">2I/Borisov</button>
+      <button data-id="3I">3I/ATLAS</button>
+    </div>
+    <div class="seg">
+      <button id="btnVR" class="small">Enter VR</button>
+      <button id="btnCurve" class="small">Curved ON</button>
+      <button id="btnRecenter" class="small">Recenter</button>
+    </div>
   </div>
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ---------- качество HUD ----------
-    const [HUD_W, HUD_H] = [1536, 864];     // достаточно для Quest 2, можно поднять до [2048,1024]
-    const PAD = 36;
-
-    // ---------- данные-демо под комету ----------
-    // Позже сюда подставим реальные поля из JSON/WebSocket
-    const comet = {
-      id: 2,
-      name: "2I/Borisov",
-      composition: [
-        {label:"H₂O", value:100},   // относит. к воде = 100
-        {label:"CO",  value:145}
-      ],
-      spectrum: [                   // nm + относительная интенсивность (0..1)
-        {lambda:388, label:"CN", val:1.00},
-        {lambda:405, label:"C₃", val:0.72},
-        {lambda:516.5, label:"C₂", val:0.95}
-      ],
-      speed: { value:43.9, max:100, unit:"км/с", ticks:[0.25,0.5,0.75] }
-    };
-
-    // ---------- HUD canvas ----------
+    // ---------- быстрый HUD ----------
+    const HUD_W = 1536, HUD_H = 864;      // подними до 2048x1024, если хочется четче
+    const PAD = 28;
     const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
     const g = hudCanvas.getContext('2d');
 
-    // ======= отрисовка блоков =======
-    // 1) Заголовок блока с пунктирной рамкой
-    function blockFrame(ctx, x,y,w,h, title){
-      ctx.save();
-      // фон блока
-      ctx.fillStyle = '#08141c';
-      ctx.globalAlpha = 0.9;
-      ctx.fillRect(x, y, w, h);
-      ctx.globalAlpha = 1;
-
-      // рамка
-      ctx.strokeStyle = '#00aa55';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8,6]);
-      ctx.strokeRect(x+0.5, y+0.5, w-1, h-1);
-      ctx.setLineDash([]);
-
-      // заголовок
-      if (title){
-        ctx.fillStyle = '#aee8ff';
-        ctx.font = '20px ui-monospace,monospace';
-        ctx.fillText(title, x+12, y+26);
+    // ---------- набор «паспортов» (демо-значения; легко заменить реальными) ----------
+    // NB: величины нормированы для красивой отрисовки в VR. Сменишь числа — графики автоматически перестроятся.
+    const PASSPORTS = {
+      "1I": {
+        id:"1I", name:"‘Oumuamua",
+        composition:[ {label:"H₂O",value:20}, {label:"CO",value:10} ],   // очень условно (poor volatiles)
+        spectrum:[ {lambda:388,label:"CN",val:0.18}, {lambda:405,label:"C₃",val:0.12} ],
+        velocity:{ value:26.3, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+        mass:{ value:0.15, unit:"rel." },                 // относительный индикатор
+        coolness:{ value:92, max:100 },                   // «игровой» индекс
+        reliability:{ measured:0.60, upper:0.05, inferred:0.35 }
+      },
+      "2I": {
+        id:"2I", name:"Borisov",
+        composition:[ {label:"H₂O",value:100}, {label:"CO",value:145} ],
+        spectrum:[ {lambda:388,label:"CN",val:1.00}, {lambda:405,label:"C₃",val:0.72}, {lambda:516.5,label:"C₂",val:0.95} ],
+        velocity:{ value:32.0, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+        mass:{ value:0.55, unit:"rel." },
+        coolness:{ value:85, max:100 },
+        reliability:{ measured:0.70, upper:0.10, inferred:0.20 }
+      },
+      "3I": {
+        id:"3I", name:"ATLAS",
+        composition:[ {label:"H₂O",value:75}, {label:"CO",value:110} ],
+        spectrum:[ {lambda:388,label:"CN",val:0.66}, {lambda:405,label:"C₃",val:0.40}, {lambda:516.5,label:"C₂",val:0.70} ],
+        velocity:{ value:29.0, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+        mass:{ value:0.35, unit:"rel." },
+        coolness:{ value:78, max:100 },
+        reliability:{ measured:0.62, upper:0.12, inferred:0.26 }
       }
-      ctx.restore();
-    }
+    };
+    let current = PASSPORTS["1I"];
 
-    // 2) Химический состав — горизонтальные капсулы
-    function drawCapsuleBars(ctx, x,y,w,h, rows){
-      const inner = 28;                  // верхняя текстовая строка
-      const bh = (h - inner - 28 - (rows.length-1)*22) / rows.length;
-      const r  = Math.min(14, bh/2);
+    // ---------- утилиты отрисовки ----------
+    function frame(ctx,x,y,w,h,title){
       ctx.save();
-      ctx.translate(x, y);
+      ctx.fillStyle='#08141c'; ctx.globalAlpha=0.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
+      ctx.strokeStyle='#00aa55'; ctx.lineWidth=2; ctx.setLineDash([8,6]); ctx.strokeRect(x+0.5,y+0.5,w-1,h-1); ctx.setLineDash([]);
+      if(title){ ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(title, x+10, y+22); }
+      ctx.restore();
+    }
+    // 1) Composition capsules
+    function capsules(ctx,x,y,w,h,rows){
+      const top=26, gap=18, bh=(h-top-24 - gap*(rows.length-1))/rows.length;
+      const r=Math.min(14,bh/2);
+      ctx.save(); ctx.translate(x,y);
+      rows.forEach((row,i)=>{
+        const yy=top + i*(bh+gap);
+        const perc=Math.max(0,Math.min(1,row.value/145)); // норм. к 145
+        const rx=90, rw=Math.max(8,(w-120)*perc), rh=bh;
 
-      ctx.fillStyle = '#5fd7ff';
-      ctx.font = '18px ui-monospace,monospace';
-      ctx.fillText('Химический состав / проск', 8, 18);
+        // grid
+        ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
+        for(let gx=0; gx<w-100; gx+=80){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
 
-      rows.forEach((row, i)=>{
-        const yy = inner + i*(bh+22);
-        const perc = Math.max(0, Math.min(1, row.value/145)); // нормируем к 145 как в макете
-        const valW = Math.max(8, (w-120) * perc);
+        // gradient cap
+        const grad=ctx.createLinearGradient(0,yy,w-100,yy);
+        grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
+        ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
 
-        // сетка вертикальная
-        ctx.strokeStyle = 'rgba(0,224,255,.10)'; ctx.lineWidth=1;
-        for(let gx=0; gx<w-100; gx+=80){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+bh); ctx.stroke(); }
-
-        // капсула (градиент)
-        const grad = ctx.createLinearGradient(0,yy, w-100,yy);
-        grad.addColorStop(0,  'rgba(120,240,255,0.25)');
-        grad.addColorStop(0.5,'rgba(160,250,255,0.85)');
-        grad.addColorStop(1,  'rgba(120,240,255,0.25)');
-        ctx.fillStyle = grad;
-        ctx.strokeStyle = 'rgba(120,240,255,0.6)';
-
-        const rx = 90, rw = valW, rh = bh;
         ctx.beginPath();
-        // скругление по четыре радиуса
-        ctx.moveTo(rx+r, yy);
-        ctx.lineTo(rx+rw-r, yy);
-        ctx.quadraticCurveTo(rx+rw, yy, rx+rw, yy+r);
-        ctx.lineTo(rx+rw, yy+rh-r);
-        ctx.quadraticCurveTo(rx+rw, yy+rh, rx+rw-r, yy+rh);
-        ctx.lineTo(rx+r, yy+rh);
-        ctx.quadraticCurveTo(rx, yy+rh, rx, yy+rh-r);
-        ctx.lineTo(rx, yy+r);
-        ctx.quadraticCurveTo(rx, yy, rx+r, yy);
-        ctx.closePath();
-        ctx.fill(); ctx.stroke();
+        ctx.moveTo(rx+r,yy); ctx.lineTo(rx+rw-r,yy); ctx.quadraticCurveTo(rx+rw,yy,rx+rw,yy+r);
+        ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
+        ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
+        ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
 
-        // подписи «H2O / 145.00»
-        ctx.fillStyle = '#aee8ff';
-        ctx.font = '18px ui-monospace,monospace';
+        ctx.fillStyle='#aee8ff'; ctx.font='18px ui-monospace,monospace'; ctx.textAlign='left';
         ctx.fillText(row.label, 8, yy+rh*0.68);
-        ctx.textAlign = 'right';
-        ctx.fillText(row.value.toFixed(2), rx+rw, yy+rh*0.68);
-        ctx.textAlign = 'left';
+        ctx.textAlign='right'; ctx.fillText(row.value.toFixed(2), rx+rw, yy+rh*0.68); ctx.textAlign='left';
       });
-
-      // подпись относительная
-      ctx.fillStyle = '#aee8ff';
-      ctx.font = '16px ui-monospace,monospace';
-      ctx.fillText('Относительно воды = 100 (HST/COS)', 8, h-8);
-      ctx.restore();
-    }
-
-    // 3) Спектр — вертикальные пики с подписями λ
-    function drawSpectrum(ctx, x,y,w,h, lines){
-      ctx.save(); ctx.translate(x,y);
-      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace';
-      ctx.fillText('Линии спектра (эмиссия)', 8, 18);
-
-      // оси
-      const ax = 52, ay = 28, gw = w-ax-16, gh = h-ay-28;
-      ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
-      // вертикальная сетка
-      for(let gx=0; gx<=gw; gx+=80){ ctx.beginPath(); ctx.moveTo(ax+gx, ay); ctx.lineTo(ax+gx, ay+gh); ctx.stroke(); }
-      // ось X
-      ctx.strokeStyle='rgba(0,224,255,.35)';
-      ctx.beginPath(); ctx.moveTo(ax, ay+gh); ctx.lineTo(ax+gw, ay+gh); ctx.stroke();
-
-      // диапазон λ из данных
-      const lambdas = lines.map(l=>l.lambda);
-      const Lmin = Math.min(...lambdas)-5, Lmax = Math.max(...lambdas)+5;
-      const scaleX = (λ)=> ax + (λ-Lmin)/(Lmax-Lmin) * gw;
-
-      // пики
-      lines.forEach(l=>{
-        const lx = scaleX(l.lambda);
-        const hRel = Math.max(0.2, Math.min(1, l.val));
-        const top = ay + gh*(1-hRel);
-
-        // собственно пик (светящаяся линия + кружок)
-        ctx.strokeStyle='rgba(120,240,255,.95)'; ctx.lineWidth=3;
-        ctx.beginPath(); ctx.moveTo(lx, ay+gh); ctx.lineTo(lx, top); ctx.stroke();
-
-        ctx.fillStyle='rgba(160,250,255,.95)';
-        ctx.beginPath(); ctx.arc(lx, top, 5, 0, Math.PI*2); ctx.fill();
-
-        // подпись
-        ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
-        ctx.save(); ctx.translate(lx+6, top-8); ctx.rotate(-0.24);
-        ctx.fillText(`${l.label} (${l.lambda} nm)`, 0, 0);
-        ctx.restore();
-      });
-
-      // подпись оси X
       ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
-      ctx.fillText('ось X — λ, nm', ax+gw-110, ay+gh+22);
+      ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6);
       ctx.restore();
     }
-
-    // 4) Donut-скорость
-    function drawDonut(ctx, x,y,w,h, info){
+    // 2) Emission spectrum
+    function spectrum(ctx,x,y,w,h,lines){
       ctx.save(); ctx.translate(x,y);
-      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace';
-      ctx.fillText('Скорость (кольцевой график)', 8, 18);
-
-      const cx = w*0.5, cy = h*0.52, R = Math.min(w,h)*0.32, T = Math.max(20, R*0.22);
-
-      // фон-кольцо
-      ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T;
-      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.stroke();
-
-      // активный сектор
-      const ratio = Math.max(0, Math.min(1, info.value / info.max));
-      const start = -Math.PI/2, end = start + ratio*Math.PI*2;
-      const grad = ctx.createLinearGradient(cx-R,cy, cx+R,cy);
-      grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
-      ctx.strokeStyle = grad; ctx.lineWidth=T; ctx.lineCap='round';
-      ctx.beginPath(); ctx.arc(cx, cy, R, start, end); ctx.stroke();
-
-      // риски
-      ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
-      (info.ticks||[]).forEach(t=>{
-        const a = start + t*Math.PI*2, r1=R-T*0.55, r2=R-T*0.1;
-        ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1);
-        ctx.lineTo(cx+Math.cos(a)*r2, cy+Math.sin(a)*r2); ctx.stroke();
+      const ax=52, ay=26, gw=w-ax-16, gh=h-ay-26;
+      // grid
+      ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
+      for(let gx=0; gx<=gw; gx+=80){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
+      ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
+      // domain
+      const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls)-5, Lmax=Math.max(...Ls)+5;
+      const sx=λ=> ax + (λ-Lmin)/(Lmax-Lmin)*gw;
+      lines.forEach(l=>{
+        const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val)); const top=ay+gh*(1-hRel);
+        ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
+        ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5,0,Math.PI*2); ctx.fill();
+        ctx.save(); ctx.translate(lx+6, top-8); ctx.rotate(-0.24); ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
+        ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
       });
-
-      // числа
-      ctx.fillStyle='#aee8ff'; ctx.font='bold 36px ui-monospace,monospace';
-      const txt = info.value.toFixed(2)+' '+info.unit;
-      const tw = ctx.measureText(txt).width;
-      ctx.fillText(txt, cx - tw/2, cy+12);
-      ctx.font='16px ui-monospace,monospace';
-      const pct = Math.round(ratio*100);
-      const subt = `${pct}% от ${info.max} ${info.unit}`;
-      const stw = ctx.measureText(subt).width;
-      ctx.fillText(subt, cx - stw/2, cy+32);
-
-      // шкала 0..100% внизу
-      ctx.fillText('100% = 100 км/с', w-140, h-8);
+      ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace'; ctx.fillText('λ, nm', ax+gw-40, ay+gh+20);
+      ctx.restore();
+    }
+    // 3) Donut generic
+    function donut(ctx,x,y,w,h, value, max, unit, ticks=[], titleLine=null){
+      ctx.save(); ctx.translate(x,y);
+      if(titleLine){ ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText(titleLine,8,18); }
+      const cx=w*.5, cy=h*.52, R=Math.min(w,h)*.32, T=Math.max(20,R*.22);
+      ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.stroke();
+      const r=Math.max(0,Math.min(1,value/max)); const a0=-Math.PI/2, a1=a0 + r*Math.PI*2;
+      const grad=ctx.createLinearGradient(cx-R,cy, cx+R,cy); grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
+      ctx.strokeStyle=grad; ctx.lineWidth=T; ctx.lineCap='round'; ctx.beginPath(); ctx.arc(cx,cy,R,a0,a1); ctx.stroke();
+      ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
+      ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
+      ctx.fillStyle='#aee8ff'; ctx.font='bold 34px ui-monospace,monospace'; const txt=`${value.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt, cx-tw/2, cy+10);
+      ctx.font='16px ui-monospace,monospace'; const pct=Math.round(r*100), subt=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(subt).width; ctx.fillText(subt, cx-stw/2, cy+30);
+      ctx.restore();
+    }
+    // 4) Mass bar
+    function massBar(ctx,x,y,w,h,val){
+      ctx.save(); ctx.translate(x,y);
+      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Mass (relative)',8,18);
+      const ax=60, ay=28, gw=w-ax-20, gh=h-ay-28;
+      // axis
+      ctx.strokeStyle='rgba(0,224,255,.25)'; ctx.lineWidth=1; ctx.strokeRect(ax,ay,gw,gh);
+      ctx.fillStyle='rgba(160,250,255,.85)';
+      const hh = Math.max(6, gh*val);
+      ctx.fillRect(ax+20, ay+gh-hh, gw-40, hh);
+      ctx.restore();
+    }
+    // 5) Data reliability stacked bars
+    function reliabilityStack(ctx,x,y,w,h, r){
+      ctx.save(); ctx.translate(x,y);
+      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace'; ctx.fillText('Data reliability',8,18);
+      const ax=60, ay=28, gw=w-ax-20, gh=h-ay-28;
+      const total=Math.max(1e-6, r.measured + r.upper + r.inferred);
+      const m= r.measured/total, u=r.upper/total, i=r.inferred/total;
+      const x0=ax+20, barW=gw-40, y0=ay+20, bh=gh-40;
+      // background
+      ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
+      // segments
+      let cur=x0;
+      ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0, wm,bh); cur+=wm;
+      ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0, wu,bh); cur+=wu;
+      ctx.fillStyle='rgba(80,180,235,.55)';  const wi=barW*i; ctx.fillRect(cur,y0, wi,bh);
+      // legend
+      ctx.font='16px ui-monospace,monospace'; ctx.fillStyle='#aee8ff';
+      ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20);
+      ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180, y0+bh+20);
+      ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380, y0+bh+20);
       ctx.restore();
     }
 
-    // ======= композиция HUD =======
+    // ---------- компоновка 3×2 ----------
     function renderHUD(time){
-      g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-      g.fillStyle='#00ff66'; g.font='bold 44px ui-monospace,monospace';
-      g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 88);
+      g.fillStyle= '#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
+      g.fillStyle= '#00ff66'; g.font='bold 38px ui-monospace,monospace';
+      g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 72);
 
-      // сетка 3 панели
-      const COLS=3, ROWS=1;
+      const COLS=3, ROWS=2;
       const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
-      const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
-      const x1 = PAD + 0*(cellW+PAD), y1 = 120 + PAD;
-      const x2 = PAD + 1*(cellW+PAD), y2 = y1;
-      const x3 = PAD + 2*(cellW+PAD), y3 = y1;
+      const cellH = Math.floor((HUD_H - 110 - PAD*(ROWS+1)) / ROWS);
+      const x = c=> PAD + c*(cellW+PAD);
+      const y = r=> 90 + PAD + r*(cellH+PAD);
 
-      // 1) химсостав
-      blockFrame(g, x1, y1, cellW, cellH, `#${comet.id} ${comet.name} — Химсостав`);
-      drawCapsuleBars(g, x1, y1+28, cellW, cellH-36, comet.composition);
+      // 1 row
+      frame(g, x(0), y(0), cellW, cellH, `#${current.id} ${current.name} — Chemical composition`);
+      capsules(g, x(0), y(0)+24, cellW, cellH-30, current.composition);
 
-      // 2) спектр
-      blockFrame(g, x2, y2, cellW, cellH, 'Спектр (эмиссия)');
-      drawSpectrum(g, x2, y2+28, cellW, cellH-36, comet.spectrum);
+      frame(g, x(1), y(0), cellW, cellH, 'Emission spectrum');
+      spectrum(g, x(1), y(0)+24, cellW, cellH-30, current.spectrum);
 
-      // 3) скорость (donut)
-      // лёгкая «живая» болтанка для демо
-      const jitter = (Math.sin(time*0.002)+1)*0.5*2.5; // ±2.5
-      const sp = {...comet.speed, value: comet.speed.value + (jitter-1.25)};
-      blockFrame(g, x3, y3, cellW, cellH, 'Скорость (орб. оценка)');
-      drawDonut(g, x3, y3+28, cellW, cellH-36, sp);
+      // слегка «живая» скорость
+      const jitter=(Math.sin(time*0.002)+1)*0.5*2.2;
+      frame(g, x(2), y(0), cellW, cellH, 'Velocity');
+      donut(g, x(2), y(0)+24, cellW, cellH-30, current.velocity.value + (jitter-1.1), current.velocity.max, current.velocity.unit, current.velocity.ticks);
 
-      g.fillStyle='#aee8ff'; g.font='20px ui-monospace,monospace';
-      g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
+      // 2 row
+      frame(g, x(0), y(1), cellW, cellH, 'Mass (estimate)');
+      massBar(g, x(0), y(1)+24, cellW, cellH-30, current.mass.value);
+
+      frame(g, x(1), y(1), cellW, cellH, 'Coolness index');
+      donut(g, x(1), y(1)+24, cellW, cellH-30, current.coolness.value, current.coolness.max, '%', [.25,.5,.75], 'Coolness');
+
+      frame(g, x(2), y(1), cellW, cellH, 'Data reliability');
+      reliabilityStack(g, x(2), y(1)+24, cellW, cellH-30, current.reliability);
+
+      // статус
+      g.fillStyle='#aee8ff'; g.font='18px ui-monospace,monospace';
+      g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-18);
     }
 
-    // ======= Three.js / WebXR =======
+    // ---------- Three/WebXR ----------
     const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
@@ -270,11 +237,11 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
-    let CURVED = true, RADIUS = 1.2, PANEL_W=1.9, PANEL_H=1.05;
+    let CURVED = true, RADIUS = 1.2, PANEL_W = 2.1, PANEL_H = 1.25; // чуточку больше — 6 панелей
     function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
-      if (!curved) return new THREE.PlaneGeometry(w, h);
-      const arc = w / r; const thetaStart = Math.PI/2 - arc/2;
-      return new THREE.CylinderGeometry(r, r, h, 64, 1, true, thetaStart, arc);
+      if(!curved) return new THREE.PlaneGeometry(w,h);
+      const arc=w/r, thetaStart=Math.PI/2 - arc/2;
+      return new THREE.CylinderGeometry(r,r,h,64,1,true,thetaStart,arc);
     }
 
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
@@ -286,9 +253,18 @@
 
     const hudMaterial = new THREE.MeshBasicMaterial({map:hudTexture, side:THREE.DoubleSide});
     const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
-    hudPanel.position.set(0,1.6,-1.6);
-    if (CURVED) hudPanel.rotation.y = Math.PI;
+    hudPanel.position.set(0,1.6,-1.7);
+    if(CURVED) hudPanel.rotation.y = Math.PI;
     scene.add(hudPanel);
+
+    // UI кнопки (выбор кометы)
+    document.getElementById('cometButtons').addEventListener('click', (e)=>{
+      const btn = e.target.closest('button[data-id]');
+      if(!btn) return;
+      document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      current = PASSPORTS[btn.dataset.id];
+    });
 
     document.getElementById('btnCurve').onclick = ()=>{
       CURVED = !CURVED;
@@ -297,7 +273,7 @@
       hudPanel.geometry = buildPanelGeometry(CURVED);
       hudPanel.rotation.y = CURVED ? Math.PI : 0;
     };
-    document.getElementById('btnRecenter').onclick = ()=> hudPanel.position.set(0,1.6,-1.6);
+    document.getElementById('btnRecenter').onclick = ()=> hudPanel.position.set(0,1.6,-1.7);
 
     addEventListener('resize', ()=>{
       camera.aspect = innerWidth/innerHeight;
@@ -305,7 +281,7 @@
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // обновляем HUD ~30 fps для экономии
+    // цикл рендера (HUD обновляем ~30 FPS)
     let last=0; const HUD_INTERVAL=1000/30;
     renderer.setAnimationLoop((t)=>{
       if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
