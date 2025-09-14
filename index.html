@@ -28,6 +28,28 @@
   <a-scene renderer="colorManagement: true; physicallyCorrectLights: false"
            background="color: #04060a"
            xr="enabled: true">
+<div style="position:fixed;left:12px;bottom:12px;z-index:10;font:14px monospace">
+  <button onclick="fitPanel()" style="padding:6px 10px">[F] Fit panel</button>
+  <button onclick="recenter()"  style="padding:6px 10px">[R] Recenter</button>
+  <script>
+  function recenter(){
+    const rig = document.querySelector('#rig');
+    const panel = document.querySelector('#hudPanel');
+    rig.setAttribute('position','0 1.6 0');
+    panel.setAttribute('position','0 1.6 -1.2');
+    panel.setAttribute('rotation','0 0 0');
+  }
+  function fitPanel(){
+    const panel = document.querySelector('#hudPanel');
+    // чуть ближе/крупнее
+    panel.setAttribute('hud-texture','metersW:1.9; metersH:1.0; distance:1.1; curved:false');
+    panel.setAttribute('position','0 1.6 -1.1');
+  }
+  // Авто-рецентр при входе в VR
+  document.querySelector('a-scene').addEventListener('enter-vr', recenter);
+</script>
+
+</div>
     <!-- Камера/риг -->
     <a-entity id="rig" position="0 1.6 0">
       <a-camera wasd-controls-enabled="false" look-controls="true"></a-camera>
@@ -253,6 +275,7 @@
   </script>
 </body>
 </html>
+
 
 
 
