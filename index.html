@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — Three.js WebXR (world-locked)</title>
+  <title>VR HUD — Comet Panels (Three.js WebXR)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
   <style>
@@ -15,49 +15,97 @@
 <body>
   <div id="ui">
     <button id="btnVR">Enter VR</button>
-    <button id="btnPin">Unpin (world)</button>
+    <button id="btnCurve">Curved ON</button>
     <button id="btnRecenter">Recenter</button>
-    <button id="btnFit">Fit panel</button>
   </div>
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ========= 1) HUD-текстура =========
-    const HUD_W = 2048, HUD_H = 1024;               // поднимай до 4096x2048 при желании
-    const hudCanvas = document.createElement('canvas'); hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
+    // ------------------ HUD параметры ------------------
+    const HUD_W = 2048, HUD_H = 1024; // увеличь до 4096x2048 для сверхчёткости
+    const PAD = 40;
+    const titleFont = 48, labelFont = 24, footFont = 20;
+
+    // Кривизна панели
+    let CURVED = true, RADIUS = 1.2;           // радиус цилиндра (м)
+    const PANEL_W = 1.9, PANEL_H = 1.05;       // физический размер (метры)
+
+    // ------------------ Загрузка данных о кометах ------------------
+    // Ожидаемый формат см. ниже в блоке comets.json
+    async function loadComets(){
+      // пробуем загрузить внешний файл
+      try{
+        const res = await fetch('comets.json', {cache:'no-store'});
+        if(!res.ok) throw new Error(res.statusText);
+        const json = await res.json();
+        if(Array.isArray(json) && json.length) return json;
+      }catch(e){
+        console.warn('comets.json не найден, используем запасные данные.', e);
+      }
+      // встроенный запасной набор (ID, имя, краткая серия значений)
+      return [
+        {"id":1,"name":"12P/Pons–Brooks","perih":"2024-04-21","series":[0.35,0.55,0.72,0.66,0.4,0.28,0.52,0.78]},
+        {"id":2,"name":"1P/Halley","perih":"2061-07-28","series":[0.18,0.22,0.3,0.27,0.24,0.26,0.29,0.31]},
+        {"id":3,"name":"C/2023 A3 (Tsuchinshan–ATLAS)","perih":"2024-09-27","series":[0.2,0.35,0.5,0.65,0.8,0.7,0.55,0.4]}
+      ];
+    }
+
+    // Подготовка буферов (скользящие окна для графиков)
+    function buildSeriesBuffers(comets, length=64){
+      // нормализуем вход: каждая комета имеет массив от 0..1; растягиваем до length
+      return comets.map(c=>{
+        const src = (Array.isArray(c.series)&&c.series.length) ? c.series : [0.2,0.4,0.6,0.4];
+        const out = new Array(length).fill(0);
+        for(let i=0;i<length;i++){
+          const t = i*(src.length-1)/(length-1);
+          const i0 = Math.floor(t), i1 = Math.min(src.length-1,i0+1);
+          const a = src[i0], b = src[i1], f = t - i0;
+          out[i] = a*(1-f) + b*f; // линейная интерполяция
+        }
+        return out;
+      });
+    }
+
+    // Немного «жизни»: каждую секунду подталкиваем последние значения
+    function nudgeBuffers(buffers){
+      buffers.forEach((arr,k)=>{
+        arr.shift();
+        const last = arr[arr.length-1] ?? 0.5;
+        const jitter = (Math.random()-0.5)*0.08;
+        const next = Math.max(0, Math.min(1, last + jitter));
+        arr.push(next);
+      });
+    }
+
+    // ------------------ Рисовалка HUD ------------------
+    const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
     const g = hudCanvas.getContext('2d');
 
-    const COLS = 3, ROWS = 1, PAD = 40;
-    const titleFont = 48, labelFont = 24, footFont = 20;
-    const panels = ["CCOMP","CSPEC","CSPEED"];
-
-    function drawBars(ctx, w, h, t, seed=0){
-      const N = 32;
-      const barW = (w-32)/N * 0.8;
+    function drawBars(ctx, w, h, arr){
+      const N = arr.length;
+      const step = (w-32)/N, barW = step*0.8;
       for(let i=0;i<N;i++){
-        const x = 16 + i*((w-32)/N);
-        const phase = i*0.37 + seed*1.13;
-        const amp = Math.sin(t*0.002 + phase)*0.5 + 0.5;   // [0..1]
-        const val = 16 + amp*(h-80);
+        const x = 16 + i*step;
+        const val = 16 + arr[i]*(h-80);
         ctx.fillRect(x, h-24-val, barW, val);
       }
     }
 
-    function renderHUD(t){
-      // фон
-      g.fillStyle = '#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-      // заголовок
-      g.fillStyle = '#00ff66'; g.font = `bold ${titleFont}px ui-monospace,monospace`;
-      g.fillText('C:\\> INTERSTELLAR HUD // VR', 48, 88);
+    function renderHUD(time, comets, buffers){
+      g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
+      g.fillStyle='#00ff66'; g.font = `bold ${titleFont}px ui-monospace,monospace`;
+      g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 88);
 
-      // сетка
+      // раскладка: до 3 панелей в ряд
+      const COLS = Math.min(3, comets.length);
+      const ROWS = Math.ceil(comets.length / COLS);
       const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
       const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
 
-      for(let idx=0; idx<panels.length; idx++){
-        const col = idx % COLS, row = (idx/COLS)|0;
+      comets.forEach((c, idx)=>{
+        const col = idx % COLS, row = (idx / COLS) | 0;
         const x = PAD + col*(cellW + PAD);
         const y = 120 + PAD + row*(cellH + PAD);
 
@@ -66,24 +114,28 @@
         g.strokeStyle = '#00aa55'; g.lineWidth = 2;
         g.setLineDash([8,6]); g.strokeRect(x-8.5, y-8.5, cellW+17, cellH+17); g.setLineDash([]);
 
-        // подпись
+        // заголовок панели: уникальный номер + имя
         g.fillStyle = '#aee8ff'; g.font = `${labelFont}px ui-monospace,monospace`;
-        g.fillText(panels[idx], x+8, y+28);
+        g.fillText(`#${c.id} ${c.name}`, x+8, y+28);
 
-        // ВАЖНО: смещаем систему координат к началу ячейки
-        g.save();
-        g.translate(x, y);
+        // график
+        g.save(); g.translate(x, y);
         g.fillStyle = '#00ff66';
-        drawBars(g, cellW, cellH, t, idx);
+        drawBars(g, cellW, cellH, buffers[idx]);
         g.restore();
-      }
 
-      // футер
-      g.fillStyle = '#aee8ff'; g.font = `${footFont}px ui-monospace,monospace`;
+        // подпись снизу (перигелий, если есть)
+        if (c.perih){
+          g.fillStyle = '#5fd7ff'; g.font = `18px ui-monospace,monospace`;
+          g.fillText(`perihelion: ${c.perih}`, x+8, y+cellH-8);
+        }
+      });
+
+      g.fillStyle='#aee8ff'; g.font = `${footFont}px ui-monospace,monospace`;
       g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
     }
 
-    // ========= 2) Three.js сцена =========
+    // ------------------ Three.js / WebXR ------------------
     const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
@@ -96,11 +148,13 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
-    // тестовый куб
-    const cube = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshBasicMaterial({color:0x00ff66}));
-    cube.position.set(0,1.6,-2); scene.add(cube);
+    function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
+      if (!curved) return new THREE.PlaneGeometry(w, h);
+      const arc = w / r;
+      const thetaStart = Math.PI/2 - arc/2;
+      return new THREE.CylinderGeometry(r, r, h, 64, 1, true, thetaStart, arc);
+    }
 
-    // ========= 3) Одна текстура — две панели =========
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
     hudTexture.colorSpace = THREE.SRGBColorSpace;
     hudTexture.generateMipmaps = true;
@@ -109,54 +163,19 @@
     hudTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
     const hudMaterial = new THREE.MeshBasicMaterial({map:hudTexture, side:THREE.DoubleSide});
+    const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
+    hudPanel.position.set(0,1.6,-1.6);
+    if (CURVED) hudPanel.rotation.y = Math.PI;
+    scene.add(hudPanel);
 
-    // head-locked (для окна)
-    const headPanel  = new THREE.Mesh(new THREE.PlaneGeometry(1.8,0.95), hudMaterial);
-    headPanel.position.set(0,0,-1.05);
-    camera.add(headPanel);
-    headPanel.visible = true;
-
-    // world-locked (для VR)
-    const worldPanel = new THREE.Mesh(new THREE.PlaneGeometry(1.8,0.95), hudMaterial);
-    worldPanel.visible = false; scene.add(worldPanel);
-
-    const tmpPos = new THREE.Vector3(), tmpDir = new THREE.Vector3();
-    function placeWorldPanel(dist=1.6){
-      camera.getWorldPosition(tmpPos);
-      camera.getWorldDirection(tmpDir);
-      tmpPos.add(tmpDir.multiplyScalar(dist));
-      worldPanel.position.copy(tmpPos);
-      worldPanel.quaternion.copy(camera.quaternion);
-    }
-
-    // ========= 4) XR события и кнопки =========
-    renderer.xr.addEventListener('sessionstart', ()=>{
-      headPanel.visible = false; worldPanel.visible = true; placeWorldPanel(1.6);
-      document.getElementById('btnPin').textContent = 'Pin to head';
-    });
-    renderer.xr.addEventListener('sessionend', ()=>{
-      worldPanel.visible = false; headPanel.visible = true;
-      document.getElementById('btnPin').textContent = 'Unpin (world)';
-    });
-
-    document.getElementById('btnPin').onclick = ()=>{
-      const inVR = renderer.xr.isPresenting;
-      if(inVR){
-        if(worldPanel.visible){ worldPanel.visible=false; headPanel.visible=true; document.getElementById('btnPin').textContent='Unpin (world)'; }
-        else { headPanel.visible=false; worldPanel.visible=true; placeWorldPanel(1.6); document.getElementById('btnPin').textContent='Pin to head'; }
-      }else{
-        headPanel.visible = !headPanel.visible;
-        worldPanel.visible = !headPanel.visible;
-        if(worldPanel.visible) placeWorldPanel(1.6);
-        document.getElementById('btnPin').textContent = worldPanel.visible ? 'Pin to head' : 'Unpin (world)';
-      }
+    document.getElementById('btnCurve').onclick = ()=>{
+      CURVED = !CURVED;
+      document.getElementById('btnCurve').textContent = CURVED ? 'Curved ON' : 'Curved OFF';
+      hudPanel.geometry.dispose();
+      hudPanel.geometry = buildPanelGeometry(CURVED);
+      hudPanel.rotation.y = CURVED ? Math.PI : 0;
     };
-    document.getElementById('btnRecenter').onclick = ()=> placeWorldPanel(1.6);
-    document.getElementById('btnFit').onclick = ()=>{
-      const t = worldPanel.visible ? worldPanel : headPanel;
-      t.position.set(0, worldPanel.visible?1.6:0, -(worldPanel.visible?1.2:0.95));
-      t.scale.set(1.1,1.1,1);
-    };
+    document.getElementById('btnRecenter').onclick = ()=> { hudPanel.position.set(0,1.6,-1.6); };
 
     addEventListener('resize', ()=>{
       camera.aspect = innerWidth/innerHeight;
@@ -164,13 +183,20 @@
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // ========= 5) Рендер-цикл =========
-    renderer.setAnimationLoop((timeMS)=>{
-      cube.rotation.y = timeMS/1000;
-      renderHUD(timeMS);                 // анимируем графики здесь же
-      hudTexture.needsUpdate = true;
-      renderer.render(scene, camera);
-    });
+    // ------------------ Главный запуск ------------------
+    (async function main(){
+      const comets = await loadComets();
+      let buffers = buildSeriesBuffers(comets, 64);
+
+      // лёгкое «подталкивание» каждые 900 мс
+      setInterval(()=> nudgeBuffers(buffers), 900);
+
+      renderer.setAnimationLoop((t)=>{
+        renderHUD(t, comets, buffers);
+        hudTexture.needsUpdate = true;
+        renderer.render(scene, camera);
+      });
+    })();
   </script>
 </body>
 </html>
