@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — Comet Panels (Three.js WebXR)</title>
+  <title>VR HUD — Comets (styled bars, fast)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
   <style>
@@ -23,119 +23,127 @@
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ------------------ HUD параметры ------------------
-    const HUD_W = 2048, HUD_H = 1024; // увеличь до 4096x2048 для сверхчёткости
-    const PAD = 40;
-    const titleFont = 48, labelFont = 24, footFont = 20;
+    // ---------- ПАРАМЕТРЫ КАЧЕСТВА ----------
+    const params = new URLSearchParams(location.search);
+    const res = (params.get('res')||'mid').toLowerCase(); // low|mid|hi
+    const RESOLUTIONS = { low:[1280,720], mid:[1536,864], hi:[2048,1024] };
+    const [HUD_W, HUD_H] = RESOLUTIONS[res] ?? RESOLUTIONS.mid;
 
-    // Кривизна панели
-    let CURVED = true, RADIUS = 1.2;           // радиус цилиндра (м)
-    const PANEL_W = 1.9, PANEL_H = 1.05;       // физический размер (метры)
+    // ---------- ПАНЕЛИ / ДАННЫЕ ----------
+    // уникальные номера и подписи — сюда потом подставим реальные кометы
+    const PANELS = [
+      { id:1, label:"12P/Pons–Brooks" },
+      { id:2, label:"1P/Halley" },
+      { id:3, label:"C/2023 A3 (Tsuchinshan–ATLAS)" }
+    ];
+    const COLS = Math.min(3, PANELS.length);
+    const ROWS = Math.ceil(PANELS.length / COLS);
+    const PAD  = 40;
 
-    // ------------------ Загрузка данных о кометах ------------------
-    // Ожидаемый формат см. ниже в блоке comets.json
-    async function loadComets(){
-      // пробуем загрузить внешний файл
-      try{
-        const res = await fetch('comets.json', {cache:'no-store'});
-        if(!res.ok) throw new Error(res.statusText);
-        const json = await res.json();
-        if(Array.isArray(json) && json.length) return json;
-      }catch(e){
-        console.warn('comets.json не найден, используем запасные данные.', e);
-      }
-      // встроенный запасной набор (ID, имя, краткая серия значений)
-      return [
-        {"id":1,"name":"12P/Pons–Brooks","perih":"2024-04-21","series":[0.35,0.55,0.72,0.66,0.4,0.28,0.52,0.78]},
-        {"id":2,"name":"1P/Halley","perih":"2061-07-28","series":[0.18,0.22,0.3,0.27,0.24,0.26,0.29,0.31]},
-        {"id":3,"name":"C/2023 A3 (Tsuchinshan–ATLAS)","perih":"2024-09-27","series":[0.2,0.35,0.5,0.65,0.8,0.7,0.55,0.4]}
-      ];
-    }
+    // скользящий буфер (чуть короче ради скорости)
+    const SERIES_LEN = 48;
+    const buffers = PANELS.map(()=> new Array(SERIES_LEN).fill(0.3));
 
-    // Подготовка буферов (скользящие окна для графиков)
-    function buildSeriesBuffers(comets, length=64){
-      // нормализуем вход: каждая комета имеет массив от 0..1; растягиваем до length
-      return comets.map(c=>{
-        const src = (Array.isArray(c.series)&&c.series.length) ? c.series : [0.2,0.4,0.6,0.4];
-        const out = new Array(length).fill(0);
-        for(let i=0;i<length;i++){
-          const t = i*(src.length-1)/(length-1);
-          const i0 = Math.floor(t), i1 = Math.min(src.length-1,i0+1);
-          const a = src[i0], b = src[i1], f = t - i0;
-          out[i] = a*(1-f) + b*f; // линейная интерполяция
-        }
-        return out;
-      });
-    }
-
-    // Немного «жизни»: каждую секунду подталкиваем последние значения
-    function nudgeBuffers(buffers){
-      buffers.forEach((arr,k)=>{
+    // простая «подпитка» данных; позже сюда встанут реальные значения
+    setInterval(()=>{
+      buffers.forEach(arr=>{
         arr.shift();
         const last = arr[arr.length-1] ?? 0.5;
-        const jitter = (Math.random()-0.5)*0.08;
-        const next = Math.max(0, Math.min(1, last + jitter));
-        arr.push(next);
+        const jitter = (Math.random()-0.5)*0.06;
+        arr.push(Math.max(0, Math.min(1, last + jitter)));
       });
-    }
+    }, 120);
 
-    // ------------------ Рисовалка HUD ------------------
-    const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
+    // ---------- HUD CANVAS (+ Offscreen) ----------
+    const useOffscreen = typeof OffscreenCanvas !== 'undefined';
+    const hudCanvas = useOffscreen ? new OffscreenCanvas(HUD_W, HUD_H)
+                                   : Object.assign(document.createElement('canvas'), {width:HUD_W, height:HUD_H});
     const g = hudCanvas.getContext('2d');
 
-    function drawBars(ctx, w, h, arr){
-      const N = arr.length;
-      const step = (w-32)/N, barW = step*0.8;
+    // ---------- СТИЛЬ БАР-ГРАФИКА как в прошлой работе ----------
+    // (сетка, закруглённые бары с градиентом) — адаптация под VR
+    function drawBarsStyled(ctx, w, h, values){
+      // фон
+      ctx.fillStyle = '#071018';
+      ctx.fillRect(-8,-8,w+16,h+16);
+      // рамка (пунктир)
+      ctx.strokeStyle = '#00aa55'; ctx.lineWidth = 2; ctx.setLineDash([8,6]);
+      ctx.strokeRect(-8.5,-8.5,w+17,h+17); ctx.setLineDash([]);
+
+      // сетка
+      ctx.strokeStyle = 'rgba(0,224,255,.12)'; ctx.lineWidth = 1;
+      for(let x=0; x<w; x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+
+      // бары
+      const N = values.length;
+      const step = (w-32)/N, barW = step*0.78;
+      const grad = (x,y,wid) => {
+        const g2 = ctx.createLinearGradient(x, y, x+Math.max(1,wid), y);
+        g2.addColorStop(0,'rgba(0,180,220,.25)');
+        g2.addColorStop(0.5,'rgba(167,245,255,.65)');
+        g2.addColorStop(1,'rgba(0,180,220,.25)');
+        return g2;
+      };
+      ctx.strokeStyle = 'rgba(0,224,255,.55)';
+
       for(let i=0;i<N;i++){
         const x = 16 + i*step;
-        const val = 16 + arr[i]*(h-80);
-        ctx.fillRect(x, h-24-val, barW, val);
+        const val = 16 + values[i]*(h-80);
+        const y = h - 24 - val;
+        const r = 7, bh = val, bw = barW;
+
+        ctx.fillStyle = grad(x,y,bw);
+        // path c закруглением
+        ctx.beginPath();
+        ctx.moveTo(x+r,y);
+        ctx.lineTo(x+bw-r,y);
+        ctx.quadraticCurveTo(x+bw,y, x+bw,y+r);
+        ctx.lineTo(x+bw, y+bh-r);
+        ctx.quadraticCurveTo(x+bw,y+bh, x+bw-r,y+bh);
+        ctx.lineTo(x+r,y+bh);
+        ctx.quadraticCurveTo(x,y+bh, x,y+bh-r);
+        ctx.lineTo(x,y+r);
+        ctx.quadraticCurveTo(x,y, x+r,y);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
       }
     }
 
-    function renderHUD(time, comets, buffers){
-      g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-      g.fillStyle='#00ff66'; g.font = `bold ${titleFont}px ui-monospace,monospace`;
+    // ---------- СБОРКА HUD ----------
+    function renderHUD(){
+      g.fillStyle = '#04060a';
+      g.fillRect(0,0,HUD_W,HUD_H);
+
+      // заголовок
+      g.fillStyle = '#00ff66';
+      g.font = 'bold 48px ui-monospace,monospace';
       g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 88);
 
-      // раскладка: до 3 панелей в ряд
-      const COLS = Math.min(3, comets.length);
-      const ROWS = Math.ceil(comets.length / COLS);
       const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
       const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
 
-      comets.forEach((c, idx)=>{
-        const col = idx % COLS, row = (idx / COLS) | 0;
+      PANELS.forEach((p, idx)=>{
+        const col = idx % COLS, row = (idx/COLS)|0;
         const x = PAD + col*(cellW + PAD);
         const y = 120 + PAD + row*(cellH + PAD);
 
-        // рамка
-        g.fillStyle = '#071018'; g.fillRect(x-8, y-8, cellW+16, cellH+16);
-        g.strokeStyle = '#00aa55'; g.lineWidth = 2;
-        g.setLineDash([8,6]); g.strokeRect(x-8.5, y-8.5, cellW+17, cellH+17); g.setLineDash([]);
+        // подпись #id + имя
+        g.fillStyle = '#aee8ff';
+        g.font = '24px ui-monospace,monospace';
+        g.fillText(`#${p.id} ${p.label}`, x+8, y+28);
 
-        // заголовок панели: уникальный номер + имя
-        g.fillStyle = '#aee8ff'; g.font = `${labelFont}px ui-monospace,monospace`;
-        g.fillText(`#${c.id} ${c.name}`, x+8, y+28);
-
-        // график
+        // сам график (перенос оси в начало ячейки)
         g.save(); g.translate(x, y);
-        g.fillStyle = '#00ff66';
-        drawBars(g, cellW, cellH, buffers[idx]);
+        drawBarsStyled(g, cellW, cellH, buffers[idx]);
         g.restore();
-
-        // подпись снизу (перигелий, если есть)
-        if (c.perih){
-          g.fillStyle = '#5fd7ff'; g.font = `18px ui-monospace,monospace`;
-          g.fillText(`perihelion: ${c.perih}`, x+8, y+cellH-8);
-        }
       });
 
-      g.fillStyle='#aee8ff'; g.font = `${footFont}px ui-monospace,monospace`;
+      // статус
+      g.fillStyle = '#aee8ff';
+      g.font = '20px ui-monospace,monospace';
       g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
     }
 
-    // ------------------ Three.js / WebXR ------------------
+    // ---------- THREE / XR ----------
     const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
@@ -148,19 +156,21 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
+    // изогнутая панель (по умолчанию ON)
+    let CURVED = true, RADIUS = 1.2, PANEL_W=1.9, PANEL_H=1.05;
     function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
       if (!curved) return new THREE.PlaneGeometry(w, h);
-      const arc = w / r;
-      const thetaStart = Math.PI/2 - arc/2;
+      const arc = w / r; const thetaStart = Math.PI/2 - arc/2;
       return new THREE.CylinderGeometry(r, r, h, 64, 1, true, thetaStart, arc);
     }
 
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
     hudTexture.colorSpace = THREE.SRGBColorSpace;
-    hudTexture.generateMipmaps = true;
-    hudTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    // быстрее на Quest 2:
+    hudTexture.generateMipmaps = false;
+    hudTexture.minFilter = THREE.LinearFilter;
     hudTexture.magFilter = THREE.LinearFilter;
-    hudTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    hudTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 
     const hudMaterial = new THREE.MeshBasicMaterial({map:hudTexture, side:THREE.DoubleSide});
     const hudPanel = new THREE.Mesh(buildPanelGeometry(CURVED), hudMaterial);
@@ -175,7 +185,7 @@
       hudPanel.geometry = buildPanelGeometry(CURVED);
       hudPanel.rotation.y = CURVED ? Math.PI : 0;
     };
-    document.getElementById('btnRecenter').onclick = ()=> { hudPanel.position.set(0,1.6,-1.6); };
+    document.getElementById('btnRecenter').onclick = ()=> hudPanel.position.set(0,1.6,-1.6);
 
     addEventListener('resize', ()=>{
       camera.aspect = innerWidth/innerHeight;
@@ -183,20 +193,17 @@
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // ------------------ Главный запуск ------------------
-    (async function main(){
-      const comets = await loadComets();
-      let buffers = buildSeriesBuffers(comets, 64);
-
-      // лёгкое «подталкивание» каждые 900 мс
-      setInterval(()=> nudgeBuffers(buffers), 900);
-
-      renderer.setAnimationLoop((t)=>{
-        renderHUD(t, comets, buffers);
+    // ---------- Рендер-цикл (30 FPS для HUD) ----------
+    let lastHudUpdate = 0;
+    const HUD_INTERVAL = 1000/30; // 30 fps на обновление текстуры
+    renderer.setAnimationLoop((timeMS)=>{
+      if (timeMS - lastHudUpdate > HUD_INTERVAL){
+        renderHUD();
         hudTexture.needsUpdate = true;
-        renderer.render(scene, camera);
-      });
-    })();
+        lastHudUpdate = timeMS;
+      }
+      renderer.render(scene, camera);
+    });
   </script>
 </body>
 </html>
