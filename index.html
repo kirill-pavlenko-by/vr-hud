@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>VR HUD — Comets (styled bars, fast)</title>
+  <title>VR HUD — Comet Passport (bars • spectrum • donut)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#04060a">
   <style>
@@ -23,127 +23,241 @@
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
     import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js";
 
-    // ---------- ПАРАМЕТРЫ КАЧЕСТВА ----------
-    const params = new URLSearchParams(location.search);
-    const res = (params.get('res')||'mid').toLowerCase(); // low|mid|hi
-    const RESOLUTIONS = { low:[1280,720], mid:[1536,864], hi:[2048,1024] };
-    const [HUD_W, HUD_H] = RESOLUTIONS[res] ?? RESOLUTIONS.mid;
+    // ---------- качество HUD ----------
+    const [HUD_W, HUD_H] = [1536, 864];     // достаточно для Quest 2, можно поднять до [2048,1024]
+    const PAD = 36;
 
-    // ---------- ПАНЕЛИ / ДАННЫЕ ----------
-    // уникальные номера и подписи — сюда потом подставим реальные кометы
-    const PANELS = [
-      { id:1, label:"12P/Pons–Brooks" },
-      { id:2, label:"1P/Halley" },
-      { id:3, label:"C/2023 A3 (Tsuchinshan–ATLAS)" }
-    ];
-    const COLS = Math.min(3, PANELS.length);
-    const ROWS = Math.ceil(PANELS.length / COLS);
-    const PAD  = 40;
+    // ---------- данные-демо под комету ----------
+    // Позже сюда подставим реальные поля из JSON/WebSocket
+    const comet = {
+      id: 2,
+      name: "2I/Borisov",
+      composition: [
+        {label:"H₂O", value:100},   // относит. к воде = 100
+        {label:"CO",  value:145}
+      ],
+      spectrum: [                   // nm + относительная интенсивность (0..1)
+        {lambda:388, label:"CN", val:1.00},
+        {lambda:405, label:"C₃", val:0.72},
+        {lambda:516.5, label:"C₂", val:0.95}
+      ],
+      speed: { value:43.9, max:100, unit:"км/с", ticks:[0.25,0.5,0.75] }
+    };
 
-    // скользящий буфер (чуть короче ради скорости)
-    const SERIES_LEN = 48;
-    const buffers = PANELS.map(()=> new Array(SERIES_LEN).fill(0.3));
-
-    // простая «подпитка» данных; позже сюда встанут реальные значения
-    setInterval(()=>{
-      buffers.forEach(arr=>{
-        arr.shift();
-        const last = arr[arr.length-1] ?? 0.5;
-        const jitter = (Math.random()-0.5)*0.06;
-        arr.push(Math.max(0, Math.min(1, last + jitter)));
-      });
-    }, 120);
-
-    // ---------- HUD CANVAS (+ Offscreen) ----------
-    const useOffscreen = typeof OffscreenCanvas !== 'undefined';
-    const hudCanvas = useOffscreen ? new OffscreenCanvas(HUD_W, HUD_H)
-                                   : Object.assign(document.createElement('canvas'), {width:HUD_W, height:HUD_H});
+    // ---------- HUD canvas ----------
+    const hudCanvas = document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
     const g = hudCanvas.getContext('2d');
 
-    // ---------- СТИЛЬ БАР-ГРАФИКА как в прошлой работе ----------
-    // (сетка, закруглённые бары с градиентом) — адаптация под VR
-    function drawBarsStyled(ctx, w, h, values){
-      // фон
-      ctx.fillStyle = '#071018';
-      ctx.fillRect(-8,-8,w+16,h+16);
-      // рамка (пунктир)
-      ctx.strokeStyle = '#00aa55'; ctx.lineWidth = 2; ctx.setLineDash([8,6]);
-      ctx.strokeRect(-8.5,-8.5,w+17,h+17); ctx.setLineDash([]);
+    // ======= отрисовка блоков =======
+    // 1) Заголовок блока с пунктирной рамкой
+    function blockFrame(ctx, x,y,w,h, title){
+      ctx.save();
+      // фон блока
+      ctx.fillStyle = '#08141c';
+      ctx.globalAlpha = 0.9;
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
 
-      // сетка
-      ctx.strokeStyle = 'rgba(0,224,255,.12)'; ctx.lineWidth = 1;
-      for(let x=0; x<w; x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
-
-      // бары
-      const N = values.length;
-      const step = (w-32)/N, barW = step*0.78;
-      const grad = (x,y,wid) => {
-        const g2 = ctx.createLinearGradient(x, y, x+Math.max(1,wid), y);
-        g2.addColorStop(0,'rgba(0,180,220,.25)');
-        g2.addColorStop(0.5,'rgba(167,245,255,.65)');
-        g2.addColorStop(1,'rgba(0,180,220,.25)');
-        return g2;
-      };
-      ctx.strokeStyle = 'rgba(0,224,255,.55)';
-
-      for(let i=0;i<N;i++){
-        const x = 16 + i*step;
-        const val = 16 + values[i]*(h-80);
-        const y = h - 24 - val;
-        const r = 7, bh = val, bw = barW;
-
-        ctx.fillStyle = grad(x,y,bw);
-        // path c закруглением
-        ctx.beginPath();
-        ctx.moveTo(x+r,y);
-        ctx.lineTo(x+bw-r,y);
-        ctx.quadraticCurveTo(x+bw,y, x+bw,y+r);
-        ctx.lineTo(x+bw, y+bh-r);
-        ctx.quadraticCurveTo(x+bw,y+bh, x+bw-r,y+bh);
-        ctx.lineTo(x+r,y+bh);
-        ctx.quadraticCurveTo(x,y+bh, x,y+bh-r);
-        ctx.lineTo(x,y+r);
-        ctx.quadraticCurveTo(x,y, x+r,y);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-      }
-    }
-
-    // ---------- СБОРКА HUD ----------
-    function renderHUD(){
-      g.fillStyle = '#04060a';
-      g.fillRect(0,0,HUD_W,HUD_H);
+      // рамка
+      ctx.strokeStyle = '#00aa55';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8,6]);
+      ctx.strokeRect(x+0.5, y+0.5, w-1, h-1);
+      ctx.setLineDash([]);
 
       // заголовок
-      g.fillStyle = '#00ff66';
-      g.font = 'bold 48px ui-monospace,monospace';
-      g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 88);
+      if (title){
+        ctx.fillStyle = '#aee8ff';
+        ctx.font = '20px ui-monospace,monospace';
+        ctx.fillText(title, x+12, y+26);
+      }
+      ctx.restore();
+    }
 
-      const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
-      const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
+    // 2) Химический состав — горизонтальные капсулы
+    function drawCapsuleBars(ctx, x,y,w,h, rows){
+      const inner = 28;                  // верхняя текстовая строка
+      const bh = (h - inner - 28 - (rows.length-1)*22) / rows.length;
+      const r  = Math.min(14, bh/2);
+      ctx.save();
+      ctx.translate(x, y);
 
-      PANELS.forEach((p, idx)=>{
-        const col = idx % COLS, row = (idx/COLS)|0;
-        const x = PAD + col*(cellW + PAD);
-        const y = 120 + PAD + row*(cellH + PAD);
+      ctx.fillStyle = '#5fd7ff';
+      ctx.font = '18px ui-monospace,monospace';
+      ctx.fillText('Химический состав / проск', 8, 18);
 
-        // подпись #id + имя
-        g.fillStyle = '#aee8ff';
-        g.font = '24px ui-monospace,monospace';
-        g.fillText(`#${p.id} ${p.label}`, x+8, y+28);
+      rows.forEach((row, i)=>{
+        const yy = inner + i*(bh+22);
+        const perc = Math.max(0, Math.min(1, row.value/145)); // нормируем к 145 как в макете
+        const valW = Math.max(8, (w-120) * perc);
 
-        // сам график (перенос оси в начало ячейки)
-        g.save(); g.translate(x, y);
-        drawBarsStyled(g, cellW, cellH, buffers[idx]);
-        g.restore();
+        // сетка вертикальная
+        ctx.strokeStyle = 'rgba(0,224,255,.10)'; ctx.lineWidth=1;
+        for(let gx=0; gx<w-100; gx+=80){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+bh); ctx.stroke(); }
+
+        // капсула (градиент)
+        const grad = ctx.createLinearGradient(0,yy, w-100,yy);
+        grad.addColorStop(0,  'rgba(120,240,255,0.25)');
+        grad.addColorStop(0.5,'rgba(160,250,255,0.85)');
+        grad.addColorStop(1,  'rgba(120,240,255,0.25)');
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = 'rgba(120,240,255,0.6)';
+
+        const rx = 90, rw = valW, rh = bh;
+        ctx.beginPath();
+        // скругление по четыре радиуса
+        ctx.moveTo(rx+r, yy);
+        ctx.lineTo(rx+rw-r, yy);
+        ctx.quadraticCurveTo(rx+rw, yy, rx+rw, yy+r);
+        ctx.lineTo(rx+rw, yy+rh-r);
+        ctx.quadraticCurveTo(rx+rw, yy+rh, rx+rw-r, yy+rh);
+        ctx.lineTo(rx+r, yy+rh);
+        ctx.quadraticCurveTo(rx, yy+rh, rx, yy+rh-r);
+        ctx.lineTo(rx, yy+r);
+        ctx.quadraticCurveTo(rx, yy, rx+r, yy);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        // подписи «H2O / 145.00»
+        ctx.fillStyle = '#aee8ff';
+        ctx.font = '18px ui-monospace,monospace';
+        ctx.fillText(row.label, 8, yy+rh*0.68);
+        ctx.textAlign = 'right';
+        ctx.fillText(row.value.toFixed(2), rx+rw, yy+rh*0.68);
+        ctx.textAlign = 'left';
       });
 
-      // статус
-      g.fillStyle = '#aee8ff';
-      g.font = '20px ui-monospace,monospace';
+      // подпись относительная
+      ctx.fillStyle = '#aee8ff';
+      ctx.font = '16px ui-monospace,monospace';
+      ctx.fillText('Относительно воды = 100 (HST/COS)', 8, h-8);
+      ctx.restore();
+    }
+
+    // 3) Спектр — вертикальные пики с подписями λ
+    function drawSpectrum(ctx, x,y,w,h, lines){
+      ctx.save(); ctx.translate(x,y);
+      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace';
+      ctx.fillText('Линии спектра (эмиссия)', 8, 18);
+
+      // оси
+      const ax = 52, ay = 28, gw = w-ax-16, gh = h-ay-28;
+      ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
+      // вертикальная сетка
+      for(let gx=0; gx<=gw; gx+=80){ ctx.beginPath(); ctx.moveTo(ax+gx, ay); ctx.lineTo(ax+gx, ay+gh); ctx.stroke(); }
+      // ось X
+      ctx.strokeStyle='rgba(0,224,255,.35)';
+      ctx.beginPath(); ctx.moveTo(ax, ay+gh); ctx.lineTo(ax+gw, ay+gh); ctx.stroke();
+
+      // диапазон λ из данных
+      const lambdas = lines.map(l=>l.lambda);
+      const Lmin = Math.min(...lambdas)-5, Lmax = Math.max(...lambdas)+5;
+      const scaleX = (λ)=> ax + (λ-Lmin)/(Lmax-Lmin) * gw;
+
+      // пики
+      lines.forEach(l=>{
+        const lx = scaleX(l.lambda);
+        const hRel = Math.max(0.2, Math.min(1, l.val));
+        const top = ay + gh*(1-hRel);
+
+        // собственно пик (светящаяся линия + кружок)
+        ctx.strokeStyle='rgba(120,240,255,.95)'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(lx, ay+gh); ctx.lineTo(lx, top); ctx.stroke();
+
+        ctx.fillStyle='rgba(160,250,255,.95)';
+        ctx.beginPath(); ctx.arc(lx, top, 5, 0, Math.PI*2); ctx.fill();
+
+        // подпись
+        ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
+        ctx.save(); ctx.translate(lx+6, top-8); ctx.rotate(-0.24);
+        ctx.fillText(`${l.label} (${l.lambda} nm)`, 0, 0);
+        ctx.restore();
+      });
+
+      // подпись оси X
+      ctx.fillStyle='#aee8ff'; ctx.font='16px ui-monospace,monospace';
+      ctx.fillText('ось X — λ, nm', ax+gw-110, ay+gh+22);
+      ctx.restore();
+    }
+
+    // 4) Donut-скорость
+    function drawDonut(ctx, x,y,w,h, info){
+      ctx.save(); ctx.translate(x,y);
+      ctx.fillStyle='#5fd7ff'; ctx.font='18px ui-monospace,monospace';
+      ctx.fillText('Скорость (кольцевой график)', 8, 18);
+
+      const cx = w*0.5, cy = h*0.52, R = Math.min(w,h)*0.32, T = Math.max(20, R*0.22);
+
+      // фон-кольцо
+      ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T;
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.stroke();
+
+      // активный сектор
+      const ratio = Math.max(0, Math.min(1, info.value / info.max));
+      const start = -Math.PI/2, end = start + ratio*Math.PI*2;
+      const grad = ctx.createLinearGradient(cx-R,cy, cx+R,cy);
+      grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
+      ctx.strokeStyle = grad; ctx.lineWidth=T; ctx.lineCap='round';
+      ctx.beginPath(); ctx.arc(cx, cy, R, start, end); ctx.stroke();
+
+      // риски
+      ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
+      (info.ticks||[]).forEach(t=>{
+        const a = start + t*Math.PI*2, r1=R-T*0.55, r2=R-T*0.1;
+        ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1, cy+Math.sin(a)*r1);
+        ctx.lineTo(cx+Math.cos(a)*r2, cy+Math.sin(a)*r2); ctx.stroke();
+      });
+
+      // числа
+      ctx.fillStyle='#aee8ff'; ctx.font='bold 36px ui-monospace,monospace';
+      const txt = info.value.toFixed(2)+' '+info.unit;
+      const tw = ctx.measureText(txt).width;
+      ctx.fillText(txt, cx - tw/2, cy+12);
+      ctx.font='16px ui-monospace,monospace';
+      const pct = Math.round(ratio*100);
+      const subt = `${pct}% от ${info.max} ${info.unit}`;
+      const stw = ctx.measureText(subt).width;
+      ctx.fillText(subt, cx - stw/2, cy+32);
+
+      // шкала 0..100% внизу
+      ctx.fillText('100% = 100 км/с', w-140, h-8);
+      ctx.restore();
+    }
+
+    // ======= композиция HUD =======
+    function renderHUD(time){
+      g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
+      g.fillStyle='#00ff66'; g.font='bold 44px ui-monospace,monospace';
+      g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48, 88);
+
+      // сетка 3 панели
+      const COLS=3, ROWS=1;
+      const cellW = Math.floor((HUD_W - PAD*(COLS+1)) / COLS);
+      const cellH = Math.floor((HUD_H - 140 - PAD*(ROWS+1)) / ROWS);
+      const x1 = PAD + 0*(cellW+PAD), y1 = 120 + PAD;
+      const x2 = PAD + 1*(cellW+PAD), y2 = y1;
+      const x3 = PAD + 2*(cellW+PAD), y3 = y1;
+
+      // 1) химсостав
+      blockFrame(g, x1, y1, cellW, cellH, `#${comet.id} ${comet.name} — Химсостав`);
+      drawCapsuleBars(g, x1, y1+28, cellW, cellH-36, comet.composition);
+
+      // 2) спектр
+      blockFrame(g, x2, y2, cellW, cellH, 'Спектр (эмиссия)');
+      drawSpectrum(g, x2, y2+28, cellW, cellH-36, comet.spectrum);
+
+      // 3) скорость (donut)
+      // лёгкая «живая» болтанка для демо
+      const jitter = (Math.sin(time*0.002)+1)*0.5*2.5; // ±2.5
+      const sp = {...comet.speed, value: comet.speed.value + (jitter-1.25)};
+      blockFrame(g, x3, y3, cellW, cellH, 'Скорость (орб. оценка)');
+      drawDonut(g, x3, y3+28, cellW, cellH-36, sp);
+
+      g.fillStyle='#aee8ff'; g.font='20px ui-monospace,monospace';
       g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48, HUD_H-36);
     }
 
-    // ---------- THREE / XR ----------
+    // ======= Three.js / WebXR =======
     const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
@@ -156,7 +270,6 @@
     const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
     camera.position.set(0,1.6,0); scene.add(camera);
 
-    // изогнутая панель (по умолчанию ON)
     let CURVED = true, RADIUS = 1.2, PANEL_W=1.9, PANEL_H=1.05;
     function buildPanelGeometry(curved=true, w=PANEL_W, h=PANEL_H, r=RADIUS){
       if (!curved) return new THREE.PlaneGeometry(w, h);
@@ -166,7 +279,6 @@
 
     const hudTexture = new THREE.CanvasTexture(hudCanvas);
     hudTexture.colorSpace = THREE.SRGBColorSpace;
-    // быстрее на Quest 2:
     hudTexture.generateMipmaps = false;
     hudTexture.minFilter = THREE.LinearFilter;
     hudTexture.magFilter = THREE.LinearFilter;
@@ -193,16 +305,11 @@
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // ---------- Рендер-цикл (30 FPS для HUD) ----------
-    let lastHudUpdate = 0;
-    const HUD_INTERVAL = 1000/30; // 30 fps на обновление текстуры
-    renderer.setAnimationLoop((timeMS)=>{
-      if (timeMS - lastHudUpdate > HUD_INTERVAL){
-        renderHUD();
-        hudTexture.needsUpdate = true;
-        lastHudUpdate = timeMS;
-      }
-      renderer.render(scene, camera);
+    // обновляем HUD ~30 fps для экономии
+    let last=0; const HUD_INTERVAL=1000/30;
+    renderer.setAnimationLoop((t)=>{
+      if (t-last>HUD_INTERVAL){ renderHUD(t); hudTexture.needsUpdate = true; last=t; }
+      renderer.render(scene,camera);
     });
   </script>
 </body>
