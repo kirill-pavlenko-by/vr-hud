@@ -34,12 +34,12 @@
   </div>
   <div id="vrDock"></div>
   <div id="overlayWarn">DOM overlay недоступен — включено 3D-меню (используй контроллеры или взгляд).</div>
-  <div id="build">BUILD: 2025-09-15-F</div>
+  <div id="build">BUILD: 2025-09-15-G</div>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-/* ==== ДАННЫЕ ==== */
+/* ==== DATA ==== */
 const PASSPORTS = {
   "1I":{ id:"1I", name:"ʻOumuamua",
     composition:[
@@ -47,8 +47,11 @@ const PASSPORTS = {
       { label:"H₂O (UL, visible)", value:3 },
       { label:"CO (UL, visible)",  value:2 }
     ],
-    // Пустым не оставляем — показываем нулевые линии, чтобы секция была «живой»
-    spectrum:[ {lambda:388,label:"CN",val:0.00},{lambda:405,label:"C₃",val:0.00},{lambda:516.5,label:"C₂",val:0.00} ],
+    spectrum:[ // явные нули, чтобы секция была заполнена
+      {lambda:388,label:"CN",val:0.00},
+      {lambda:405,label:"C₃",val:0.00},
+      {lambda:516.5,label:"C₂",val:0.00}
+    ],
     velocity:{ value:26.30, max:100, unit:"km/s", ticks:[.25,.5,.75] },
     mass:{ value:0.10, unit:"rel." },
     coolness:{ value:92, max:100 },
@@ -77,6 +80,7 @@ let current = PASSPORTS["1I"];
 <script>
 /* ==== HUD CANVAS ==== */
 const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(34*SCALE);
+const TITLE_SIZE = 12; // сильно меньше заголовок
 const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
 const g=hudCanvas.getContext('2d');
 const anim={dur:1200,start:0,active:false}; const trigger=now=>{anim.start=now;anim.active=true;}
@@ -125,7 +129,7 @@ function spectrum(ctx,x,y,w,h,lines,p){
     const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls,380)-5, Lmax=Math.max(...Ls,520)+5;
     const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
     lines.forEach(l=>{
-      const lx=sx(l.lambda), hRel=Math.max(.02,Math.min(1,l.val))*p; // минимум 2% чтобы «нить» была видна
+      const lx=sx(l.lambda), hRel=Math.max(.02,Math.min(1,l.val))*p; // минимум 2%
       const top=ay+gh*(1-hRel);
       ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
       ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
@@ -198,8 +202,9 @@ function renderHUD(now){
   const p=anim.active?Math.min(1,(now-anim.start)/anim.dur):1;
   if(p>=1&&anim.active) anim.active=false;
   g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-  g.fillStyle='#00ff66'; g.font=`bold ${Math.round(36*SCALE)}px ui-monospace,monospace`;
-  g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 70*SCALE);
+  g.fillStyle='#00ff66';
+  g.font = `bold ${Math.round(TITLE_SIZE * SCALE)}px ui-monospace,monospace`;
+  g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 48*SCALE);
   const COLS=3, ROWS=2;
   const cellW=Math.floor((HUD_W-PAD*(COLS+1))/COLS);
   const cellH=Math.floor((HUD_H-110*SCALE-PAD*(ROWS+1))/ROWS);
@@ -261,19 +266,31 @@ const warningTex=new THREE.CanvasTexture(warningCanvas);
 warningTex.colorSpace=THREE.SRGBColorSpace; warningTex.minFilter=THREE.LinearFilter; warningTex.magFilter=THREE.LinearFilter;
 
 function drawWarning(t=0){
-  const blink=(Math.sin(t*2.5)+1)/2; // 0..1 ~2.5Hz
+  // более активное мигание: ~5 Гц + лёгкий пульс масштаба текста
+  const blink=(Math.sin(t*2*Math.PI*5)+1)/2; // 0..1 @ ~5Hz
   wc.clearRect(0,0,warningCanvas.width,warningCanvas.height);
   wc.fillStyle='#180000'; wc.fillRect(0,0,warningCanvas.width,warningCanvas.height);
-  wc.strokeStyle='rgba(255,40,40,0.8)'; wc.lineWidth=10; wc.strokeRect(14,14,warningCanvas.width-28,warningCanvas.height-28);
+  wc.strokeStyle=`rgba(255,40,40,${0.6+0.4*blink})`; wc.lineWidth=10; wc.strokeRect(14,14,warningCanvas.width-28,warningCanvas.height-28);
+
+  // верхняя строка
+  wc.save();
+  const scale = 1 + 0.06*blink; // пульс 6%
+  wc.translate(warningCanvas.width/2, 92);
+  wc.scale(scale, scale);
   wc.font='bold 64px ui-monospace,monospace';
-  wc.fillStyle=`rgba(255,60,60,${0.45+0.5*blink})`;
-  const txt1='WARNING !';
+  wc.fillStyle=`rgba(255,60,60,${0.55+0.45*blink})`;
+  const txt1='WARNING!';
   const m1=wc.measureText(txt1).width;
-  wc.fillText(txt1,(warningCanvas.width-m1)/2,100);
+  wc.fillText(txt1,-m1/2, 0);
+  wc.restore();
+
+  // нижняя строка
   wc.font='bold 42px ui-monospace,monospace';
-  const txt2='Collision of 3I/ATLAS with MARS is inevitable';
+  const txt2='Collision of 3I/ATLAS with MARS is inevitable.';
   const m2=wc.measureText(txt2).width;
+  wc.fillStyle=`rgba(255,60,60,${0.55+0.45*blink})`;
   wc.fillText(txt2,(warningCanvas.width-m2)/2,170);
+
   warningTex.needsUpdate=true;
 }
 
@@ -288,10 +305,10 @@ holder.add(warnPlane);
 let warnUntil=0;
 function toggleWarning(on=true){
   warnPlane.visible=on;
-  if(on){ warnUntil=performance.now()+8000; } // авто-скрытие через 8с
+  if(on){ warnUntil=performance.now()+15000; } // минимум 15 секунд
 }
 
-/* 3D-меню */
+/* 3D MENU */
 const ui3D=new THREE.Group(); holder.add(ui3D);
 ui3D.position.set(0, PANEL_H/2 + 0.12, 0.12);
 
@@ -332,12 +349,12 @@ bO.userData.onClick = ()=>{ toggleWarning(!warnPlane.visible); };
 
 const buttons3D=[b1,b2,b3,bz,bZ,bO];
 
-/* Ретикула (взгляд) */
+/* Reticle (gaze) */
 const reticle=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffffff}));
 reticle.scale.set(0.02,0.02,1); reticle.position.set(0,0,-1);
 camera.add(reticle); reticle.visible=false;
 
-/* Рэйкастер + hover-подсветка */
+/* Raycaster + hover */
 const raycaster=new THREE.Raycaster();
 let hovered=null;
 function hoverFrom(origin,dir){
@@ -359,7 +376,7 @@ function clickFromCamera(){
   clickObject(hit);
 }
 
-/* Контроллеры */
+/* Controllers */
 const controllers=[];
 for(let i=0;i<2;i++){
   const c=renderer.xr.getController(i);
@@ -389,8 +406,7 @@ let ctrlKeepAliveUntil=0;
 function bindInputSources(session){
   const updateVisibility=()=>{
     const hasAny = session.inputSources && session.inputSources.length>0;
-    // Принудительно включаем лучи при XR (устраняет «включаются со второго раза»)
-    controllers.forEach(c=>c.visible = true || hasAny);
+    controllers.forEach(c=>c.visible = true || hasAny); // держим включёнными при старте
   };
   session.addEventListener('inputsourceschange', updateVisibility);
   updateVisibility();
@@ -443,8 +459,7 @@ function createVRButton(renderer, overlayRoot){
     document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
 
     bindInputSources(s);
-    // «Прогреваем» контроллеры первые 3 секунды
-    ctrlKeepAliveUntil = performance.now()+3000;
+    ctrlKeepAliveUntil = performance.now()+3000; // прогрев 3с
     controllers.forEach(c=>c.visible=true);
 
     s.addEventListener('selectstart', (ev)=>{
@@ -467,7 +482,7 @@ function createVRButton(renderer, overlayRoot){
 }
 createVRButton(renderer, document.getElementById('ui'));
 
-/* Браузерные кнопки */
+/* DOM buttons */
 function setComet(id){
   current = PASSPORTS[id];
   document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.toggle('active', b.dataset.id===id));
@@ -480,7 +495,7 @@ document.getElementById('zoomOut').onclick=()=>{ CUR_DIST=Math.min(2.4, CUR_DIST
 document.getElementById('zoomIn' ).onclick=()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
 document.getElementById('btnOption').onclick=()=>{ toggleWarning(!warnPlane.visible); };
 
-/* Ресайз / рендер */
+/* Resize / render */
 addEventListener('resize', ()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight); placeInFront(CUR_DIST);
@@ -488,12 +503,12 @@ addEventListener('resize', ()=>{
 
 let last=0, HUD_INTERVAL=1000/30;
 renderer.setAnimationLoop((t)=>{
-  // hover от взгляда
+  // gaze hover
   const o=camera.position.clone();
   const d=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   hoverFrom(o,d);
 
-  // hover от активного контроллера
+  // controller hover
   const activeController = controllers.find(c=>c.visible);
   if(activeController){
     const p=activeController.getWorldPosition(new THREE.Vector3());
@@ -502,12 +517,12 @@ renderer.setAnimationLoop((t)=>{
     hoverFrom(p,dir);
   }
 
-  // принудительно держим контроллеры видимыми первые 3 секунды XR
+  // прогрев контроллеров
   if(xrSession && performance.now()<ctrlKeepAliveUntil){
     controllers.forEach(c=>c.visible=true);
   }
 
-  // WARNING blink
+  // WARNING: активный блинк и авто-скрытие после >=15с
   if(warnPlane.visible){
     drawWarning(t/1000);
     if(performance.now()>warnUntil){ warnPlane.visible=false; }
@@ -520,4 +535,3 @@ trigger(performance.now());
 </script>
 </body>
 </html>
-
