@@ -271,7 +271,7 @@ function drawWarning(t=0){
   const m1=wc.measureText(txt1).width;
   wc.fillText(txt1,(warningCanvas.width-m1)/2,100);
   wc.font='bold 42px ui-monospace,monospace';
-  const txt2='Столкновение AIATLAS с МАРСОМ неизбежно';
+  const txt2='Collision of 3I/ATLAS with MARS is inevitable';
   const m2=wc.measureText(txt2).width;
   wc.fillText(txt2,(warningCanvas.width-m2)/2,170);
   warningTex.needsUpdate=true;
@@ -520,3 +520,4 @@ trigger(performance.now());
 </script>
 </body>
 </html>
+
