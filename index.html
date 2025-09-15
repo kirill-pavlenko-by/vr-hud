@@ -29,12 +29,12 @@
     <div class="seg">
       <button id="zoomOut" class="small">Zoom −</button>
       <button id="zoomIn"  class="small">Zoom +</button>
-      <button id="btnRecenter" class="small">Recenter</button>
+      <button id="btnOption" class="small">OPTION</button>
     </div>
   </div>
   <div id="vrDock"></div>
   <div id="overlayWarn">DOM overlay недоступен — включено 3D-меню (используй контроллеры или взгляд).</div>
-  <div id="build">BUILD: 2025-09-14-D</div>
+  <div id="build">BUILD: 2025-09-15-F</div>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
@@ -47,7 +47,8 @@ const PASSPORTS = {
       { label:"H₂O (UL, visible)", value:3 },
       { label:"CO (UL, visible)",  value:2 }
     ],
-    spectrum:[],
+    // Пустым не оставляем — показываем нулевые линии, чтобы секция была «живой»
+    spectrum:[ {lambda:388,label:"CN",val:0.00},{lambda:405,label:"C₃",val:0.00},{lambda:516.5,label:"C₂",val:0.00} ],
     velocity:{ value:26.30, max:100, unit:"km/s", ticks:[.25,.5,.75] },
     mass:{ value:0.10, unit:"rel." },
     coolness:{ value:92, max:100 },
@@ -78,7 +79,7 @@ let current = PASSPORTS["1I"];
 const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(34*SCALE);
 const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
 const g=hudCanvas.getContext('2d');
-const anim={dur:1200,start:0,active:false}; const easeOut=x=>1-Math.pow(1-x,3); const trigger=now=>{anim.start=now;anim.active=true;}
+const anim={dur:1200,start:0,active:false}; const trigger=now=>{anim.start=now;anim.active=true;}
 
 function frame(ctx,x,y,w,h,title){
   ctx.save();
@@ -119,16 +120,23 @@ function spectrum(ctx,x,y,w,h,lines,p){
   ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
   for(let gx=0;gx<=gw;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
   ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
-  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls,380)-5, Lmax=Math.max(...Ls,520)+5;
-  const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
-  lines.forEach(l=>{
-    const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p, top=ay+gh*(1-hRel);
-    ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
-    ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
-    ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24);
+
+  if(lines.length){
+    const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls,380)-5, Lmax=Math.max(...Ls,520)+5;
+    const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
+    lines.forEach(l=>{
+      const lx=sx(l.lambda), hRel=Math.max(.02,Math.min(1,l.val))*p; // минимум 2% чтобы «нить» была видна
+      const top=ay+gh*(1-hRel);
+      ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
+      ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
+      ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24);
+      ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`;
+      ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
+    });
+  } else {
     ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`;
-    ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
-  });
+    ctx.fillText('No visible emission detected (continuum only).', ax, ay+gh/2);
+  }
   ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+16*SCALE);
   ctx.restore();
 }
@@ -245,7 +253,45 @@ function placeInFront(dist=CUR_DIST){
 }
 placeInFront(CUR_DIST);
 
-/* 3D-меню: прикреплено к панели, чуть ближе и выше */
+/* ==== OPTION / WARNING PANEL (3D) ==== */
+const warningCanvas=document.createElement('canvas');
+warningCanvas.width=1024; warningCanvas.height=256;
+const wc=warningCanvas.getContext('2d');
+const warningTex=new THREE.CanvasTexture(warningCanvas);
+warningTex.colorSpace=THREE.SRGBColorSpace; warningTex.minFilter=THREE.LinearFilter; warningTex.magFilter=THREE.LinearFilter;
+
+function drawWarning(t=0){
+  const blink=(Math.sin(t*2.5)+1)/2; // 0..1 ~2.5Hz
+  wc.clearRect(0,0,warningCanvas.width,warningCanvas.height);
+  wc.fillStyle='#180000'; wc.fillRect(0,0,warningCanvas.width,warningCanvas.height);
+  wc.strokeStyle='rgba(255,40,40,0.8)'; wc.lineWidth=10; wc.strokeRect(14,14,warningCanvas.width-28,warningCanvas.height-28);
+  wc.font='bold 64px ui-monospace,monospace';
+  wc.fillStyle=`rgba(255,60,60,${0.45+0.5*blink})`;
+  const txt1='WARNING !';
+  const m1=wc.measureText(txt1).width;
+  wc.fillText(txt1,(warningCanvas.width-m1)/2,100);
+  wc.font='bold 42px ui-monospace,monospace';
+  const txt2='Столкновение AIATLAS с МАРСОМ неизбежно';
+  const m2=wc.measureText(txt2).width;
+  wc.fillText(txt2,(warningCanvas.width-m2)/2,170);
+  warningTex.needsUpdate=true;
+}
+
+const warnPlane=new THREE.Mesh(
+  new THREE.PlaneGeometry(1.8, 0.45),
+  new THREE.MeshBasicMaterial({map:warningTex, transparent:true})
+);
+warnPlane.position.set(0, PANEL_H/2 + 0.45, 0.02);
+warnPlane.visible=false;
+holder.add(warnPlane);
+
+let warnUntil=0;
+function toggleWarning(on=true){
+  warnPlane.visible=on;
+  if(on){ warnUntil=performance.now()+8000; } // авто-скрытие через 8с
+}
+
+/* 3D-меню */
 const ui3D=new THREE.Group(); holder.add(ui3D);
 ui3D.position.set(0, PANEL_H/2 + 0.12, 0.12);
 
@@ -267,20 +313,26 @@ const b2=makeButton('2I/Borisov');
 const b3=makeButton('3I/ATLAS');
 const bz=makeButton('Zoom −',0.28,0.10);
 const bZ=makeButton('Zoom +',0.28,0.10);
+const bO=makeButton('OPTION',0.34,0.10);
+
 b1.position.set(-0.60, 0.00, 0);
 b2.position.set( 0.00, 0.00, 0);
 b3.position.set( 0.60, 0.00, 0);
-bz.position.set(-0.25,-0.18, 0);
-bZ.position.set( 0.25,-0.18, 0);
-ui3D.add(b1,b2,b3,bz,bZ);
+bz.position.set(-0.36,-0.18, 0);
+bZ.position.set( 0.00,-0.18, 0);
+bO.position.set( 0.36,-0.18, 0);
+
+ui3D.add(b1,b2,b3,bz,bZ,bO);
 b1.userData.onClick = ()=> setComet('1I');
 b2.userData.onClick = ()=> setComet('2I');
 b3.userData.onClick = ()=> setComet('3I');
 bz.userData.onClick = ()=>{ CUR_DIST=Math.min(2.4, CUR_DIST+0.12); placeInFront(CUR_DIST); };
 bZ.userData.onClick = ()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
-const buttons3D=[b1,b2,b3,bz,bZ];
+bO.userData.onClick = ()=>{ toggleWarning(!warnPlane.visible); };
 
-/* Ретикула (взгляд) — крупнее и всегда видна в XR */
+const buttons3D=[b1,b2,b3,bz,bZ,bO];
+
+/* Ретикула (взгляд) */
 const reticle=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffffff}));
 reticle.scale.set(0.02,0.02,1); reticle.position.set(0,0,-1);
 camera.add(reticle); reticle.visible=false;
@@ -307,7 +359,7 @@ function clickFromCamera(){
   clickObject(hit);
 }
 
-/* Контроллеры: лучи всегда видимы внутри XR, клики по select/squeeze */
+/* Контроллеры */
 const controllers=[];
 for(let i=0;i<2;i++){
   const c=renderer.xr.getController(i);
@@ -320,7 +372,8 @@ for(let i=0;i<2;i++){
 
   const doClick=()=>{
     const p=c.getWorldPosition(new THREE.Vector3());
-    const d=new THREE.Vector3(0,0,-1).applyQuaternion(c.quaternion);
+    const q=c.getWorldQuaternion(new THREE.Quaternion());
+    const d=new THREE.Vector3(0,0,-1).applyQuaternion(q);
     const hit=hoverFrom(p,d);
     clickObject(hit);
   };
@@ -330,7 +383,20 @@ for(let i=0;i<2;i++){
   scene.add(c); controllers.push(c);
 }
 
-/* VR Button + overlay required→optional. В XR включаем лучи + ретикула. */
+let xrSession=null;
+let ctrlKeepAliveUntil=0;
+
+function bindInputSources(session){
+  const updateVisibility=()=>{
+    const hasAny = session.inputSources && session.inputSources.length>0;
+    // Принудительно включаем лучи при XR (устраняет «включаются со второго раза»)
+    controllers.forEach(c=>c.visible = true || hasAny);
+  };
+  session.addEventListener('inputsourceschange', updateVisibility);
+  updateVisibility();
+}
+
+/* VR Button + overlay */
 function createVRButton(renderer, overlayRoot){
   const btn=document.createElement('button');
   btn.textContent='Enter VR';
@@ -339,40 +405,64 @@ function createVRButton(renderer, overlayRoot){
 
   if(!('xr' in navigator)){ btn.textContent='VR NOT SUPPORTED'; btn.disabled=true; return; }
 
-  let session=null;
-  async function startSession(requireOverlay){
-    const init={
-      [requireOverlay?'requiredFeatures':'optionalFeatures']: ['local-floor','dom-overlay'],
-      domOverlay:{root: overlayRoot}
+  async function requestSession(requireOverlay){
+    const init = {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['bounded-floor','dom-overlay','hand-tracking'],
     };
-    const s=await navigator.xr.requestSession('immersive-vr', init);
+    if(requireOverlay){
+      init.requiredFeatures.push('dom-overlay');
+      init.domOverlay = { root: overlayRoot };
+    } else {
+      init.domOverlay = { root: overlayRoot };
+    }
+    return navigator.xr.requestSession('immersive-vr', init);
+  }
+
+  async function startSession(){
+    try{
+      const s=await requestSession(true);
+      await onSessionStarted(s);
+    }catch{
+      const s=await requestSession(false);
+      await onSessionStarted(s);
+    }
+  }
+
+  async function onSessionStarted(s){
     await renderer.xr.setSession(s);
-    renderer.xr.enabled=true; session=s; btn.textContent='Exit VR';
+    xrSession=s; btn.textContent='Exit VR';
 
     document.getElementById('ui').style.display='none';
     ui3D.visible=true; reticle.visible=true;
-    controllers.forEach(c=>c.visible=true);   // <<< всегда включаем лучи
-    placeInFront(CUR_DIST); setTimeout(()=>placeInFront(CUR_DIST), 50);
+
+    placeInFront(CUR_DIST);
+    setTimeout(()=>placeInFront(CUR_DIST), 80);
 
     const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
     document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
 
-    s.addEventListener('selectstart', (ev)=>{  // gaze тоже сюда попадает
+    bindInputSources(s);
+    // «Прогреваем» контроллеры первые 3 секунды
+    ctrlKeepAliveUntil = performance.now()+3000;
+    controllers.forEach(c=>c.visible=true);
+
+    s.addEventListener('selectstart', (ev)=>{
       if(ev.inputSource && ev.inputSource.targetRayMode==='gaze'){ clickFromCamera(); }
     });
     s.addEventListener('end', ()=>{
-      session=null; btn.textContent='Enter VR';
+      xrSession=null; btn.textContent='Enter VR';
       document.getElementById('ui').style.display='';
       document.getElementById('overlayWarn').style.display='none';
       ui3D.visible=false; reticle.visible=false;
       controllers.forEach(c=>c.visible=false);
+      hovered=null; toggleWarning(false);
     });
   }
 
   btn.addEventListener('click', async ()=>{
-    if(session){ await session.end(); return; }
-    try{ await startSession(true); }
-    catch(e){ try{ await startSession(false); } catch(err){ console.warn(err); } }
+    if(xrSession){ await xrSession.end(); return; }
+    startSession();
   });
 }
 createVRButton(renderer, document.getElementById('ui'));
@@ -388,7 +478,7 @@ document.getElementById('cometButtons').addEventListener('click', e=>{
 });
 document.getElementById('zoomOut').onclick=()=>{ CUR_DIST=Math.min(2.4, CUR_DIST+0.12); placeInFront(CUR_DIST); };
 document.getElementById('zoomIn' ).onclick=()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
-document.getElementById('btnRecenter').onclick=()=>placeInFront(CUR_DIST);
+document.getElementById('btnOption').onclick=()=>{ toggleWarning(!warnPlane.visible); };
 
 /* Ресайз / рендер */
 addEventListener('resize', ()=>{
@@ -398,10 +488,30 @@ addEventListener('resize', ()=>{
 
 let last=0, HUD_INTERVAL=1000/30;
 renderer.setAnimationLoop((t)=>{
-  // hover из камеры (gaze) — чтобы видеть подсветку сразу
+  // hover от взгляда
   const o=camera.position.clone();
   const d=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   hoverFrom(o,d);
+
+  // hover от активного контроллера
+  const activeController = controllers.find(c=>c.visible);
+  if(activeController){
+    const p=activeController.getWorldPosition(new THREE.Vector3());
+    const q=activeController.getWorldQuaternion(new THREE.Quaternion());
+    const dir=new THREE.Vector3(0,0,-1).applyQuaternion(q);
+    hoverFrom(p,dir);
+  }
+
+  // принудительно держим контроллеры видимыми первые 3 секунды XR
+  if(xrSession && performance.now()<ctrlKeepAliveUntil){
+    controllers.forEach(c=>c.visible=true);
+  }
+
+  // WARNING blink
+  if(warnPlane.visible){
+    drawWarning(t/1000);
+    if(performance.now()>warnUntil){ warnPlane.visible=false; }
+  }
 
   if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
   renderer.render(scene,camera);
