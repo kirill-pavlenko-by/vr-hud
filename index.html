@@ -9,7 +9,7 @@
   :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
 
-  /* ВЕРХНЕЕ МЕНЮ (и как DOM-overlay в VR, если доступно) */
+  /* ВЕРХНЕЕ МЕНЮ (в десктопе / как overlay если повезёт) */
   #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
   #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.25);padding:6px 10px;border-radius:10px}
   #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.35);background:#0e1720;color:var(--mint);cursor:pointer}
@@ -18,17 +18,19 @@
 
   /* Кнопка входа в VR — снизу по центру */
   #vrDock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:2000}
+
+  /* Подсказка, если overlay нет */
   #overlayWarn{position:fixed;right:12px;bottom:12px;z-index:2000;background:#0a1018;border:1px solid rgba(174,232,255,.25);
                padding:8px 12px;border-radius:10px;opacity:.9;display:none}
 
-  /* Канвас рендера всегда под UI и НЕ ловит клики в десктопе */
+  /* Канвас — под UI и не ловит клики в десктопе */
   #glcanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
 
   canvas{display:block}
 </style>
 </head>
 <body>
-  <!-- HTML-UI (в очках останется поверх, если доступен DOM overlay) -->
+  <!-- HTML-UI -->
   <div id="ui">
     <div class="seg" id="cometButtons">
       <button data-id="1I" class="active">1I/ʻOumuamua</button>
@@ -43,19 +45,18 @@
     </div>
   </div>
   <div id="vrDock"></div>
-  <div id="overlayWarn">DOM overlay is not available — using 3D menu.</div>
+  <div id="overlayWarn">DOM overlay is not available — 3D menu enabled (use controllers or trigger).</div>
 
-  <!-- THREE (только core, без examples/jsm) -->
+  <!-- THREE core -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
 /* =========================================================
-   1) HUD CANVAS (твои графики + анимация заливки)
+   1) HUD CANVAS (графики + анимация)
    ========================================================= */
 const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(28*SCALE);
 const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
 const g=hudCanvas.getContext('2d');
-
 const anim={dur:1000,start:0,active:false};
 const easeOut=x=>1-Math.pow(1-x,3);
 const trigger=now=>{anim.start=now;anim.active=true;};
@@ -217,7 +218,7 @@ function renderHUD(now){
 }
 
 /* =========================================================
-   2) THREE / WebXR (без внешних examples)
+   2) THREE / WebXR
    ========================================================= */
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,canvas:Object.assign(document.createElement('canvas'),{id:'glcanvas'})});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
@@ -261,25 +262,32 @@ function applyZoom(dir){
 }
 placeInFront(CUR_DIST);
 
-/* Примитивные контроллеры: луч + маркер-сфера (видно ВСЕГДА) */
+/* === Контроллеры: лучи поверх всего + маркер === */
 function makeController(i){
   const c = renderer.xr.getController(i);
   const rayGeom = new THREE.BufferGeometry().setFromPoints([ new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1) ]);
-  const ray = new THREE.Line(rayGeom, new THREE.LineBasicMaterial({color:0x66ccff})); ray.scale.z=8; c.add(ray);
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.01,12,12), new THREE.MeshBasicMaterial({color:0xffffff})); dot.position.z=-0.05; c.add(dot);
+  const rayMat  = new THREE.LineBasicMaterial({color:0x66ccff, depthTest:false});
+  const ray = new THREE.Line(rayGeom, rayMat); ray.scale.z=8; ray.renderOrder=999; c.add(ray);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.01,12,12), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:false}));
+  dot.position.z=-0.05; dot.renderOrder=999; c.add(dot);
   scene.add(c); return c;
 }
 const controller1 = makeController(0);
 const controller2 = makeController(1);
 
-/* 3D-кнопки (fallback, если overlay нет) */
+/* === Gaze-reticle (виден даже без контроллеров) === */
+const retParent = new THREE.Group(); camera.add(retParent);
+const reticle = new THREE.Mesh(new THREE.RingGeometry(0.01,0.016,32),
+  new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide, depthTest:false, transparent:true, opacity:0.9}));
+reticle.position.z = -1; retParent.add(reticle); reticle.visible=false;
+
+/* === 3D-меню (в VR ВСЕГДА), HTML-UI в VR прячем === */
 const ui3D = new THREE.Group(); ui3D.visible=false; holder.add(ui3D);
 
 function makeLabelMat(text){
   const cw=512,ch=128, c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
-  // Без roundRect — рисуем руками (чтобы не падать в старых браузерах)
-  ctx.fillStyle='#0e1720'; ctx.strokeStyle='rgba(174,232,255,.35)'; ctx.lineWidth=4;
   const r=22, x=6, y=6, w=cw-12, h=ch-12;
+  ctx.fillStyle='#0e1720'; ctx.strokeStyle='rgba(174,232,255,.35)'; ctx.lineWidth=4;
   ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
   ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
@@ -320,10 +328,18 @@ function hitButtons(ctrl){
   const hits=raycaster.intersectObjects(ui3D.children,false);
   if(hits.length>0){ const obj=hits[0].object; if(obj.userData.onClick) obj.userData.onClick(); }
 }
+function hitButtonsFromCamera(){ // gaze
+  if(!ui3D.visible) return;
+  const origin=new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  raycaster.set(origin,dir);
+  const hits=raycaster.intersectObjects(ui3D.children,false);
+  if(hits.length>0){ hits[0].object.userData.onClick?.(); }
+}
 controller1.addEventListener('selectstart', ()=>hitButtons(controller1));
 controller2.addEventListener('selectstart', ()=>hitButtons(controller2));
 
-/* DOM-кнопки */
+/* DOM-кнопки (десктоп) */
 function setComet(id){
   document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
   const btn=document.querySelector(`#cometButtons button[data-id="${id}"]`); if(btn) btn.classList.add('active');
@@ -341,7 +357,7 @@ document.getElementById('btnBig').onclick=()=>{
   PANEL_SCALE=BIG?1.32:1.00; CUR_DIST=BIG?1.45:1.70; hudPanel.scale.setScalar(PANEL_SCALE); placeInFront(CUR_DIST);
 };
 
-/* VR-кнопка с fallback dom-overlay optional */
+/* VR-кнопка */
 function createVRButton(renderer, overlayRoot){
   const btn=document.createElement('button');
   btn.textContent='Enter VR';
@@ -365,17 +381,26 @@ function createVRButton(renderer, overlayRoot){
     try{
       let s; try { s=await start(true); } catch(_){ s=await start(false); }
       session=s; btn.textContent='Exit VR';
-      // включаем клики канваса в VR (для WebXR подсистемы), но HTML-UI всё равно сверху как overlay
+
+      // В VR: скрываем HTML-меню, включаем 3D-меню всегда
+      document.getElementById('ui').style.display='none';
+      ui3D.visible=true; reticle.visible=true;  // пусть всегда будет gaze-точка
       renderer.domElement.style.pointerEvents='auto';
+
       const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
       document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
-      ui3D.visible = !hasOverlay;
+
+      // gaze-клик (если источник — взгляд)
+      s.addEventListener('selectstart', (ev)=>{
+        if(ev.inputSource && ev.inputSource.targetRayMode==='gaze'){ hitButtonsFromCamera(); }
+      });
+
       s.addEventListener('end', ()=>{
         session=null; btn.textContent='Enter VR';
-        // вернём «некликабельность» канваса в обычном режиме
         renderer.domElement.style.pointerEvents='none';
+        document.getElementById('ui').style.display='';  // вернули HTML-UI
         document.getElementById('overlayWarn').style.display='none';
-        ui3D.visible=false;
+        ui3D.visible=false; reticle.visible=false;
       });
     }catch(err){
       console.error(err); btn.textContent='VR ERROR';
