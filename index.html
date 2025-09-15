@@ -8,7 +8,6 @@
 <style>
   :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-  /* Браузерное меню (в VR скрываем, используется 3D-меню) */
   #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
   #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
   #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
@@ -35,12 +34,12 @@
   </div>
   <div id="vrDock"></div>
   <div id="overlayWarn">DOM overlay недоступен — включено 3D-меню (используй контроллеры или взгляд).</div>
-  <div id="build">BUILD: 2025-09-14-C</div>
+  <div id="build">BUILD: 2025-09-14-D</div>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-/* ===================== ДАННЫЕ ПАСПОРТОВ ===================== */
+/* ==== ДАННЫЕ ==== */
 const PASSPORTS = {
   "1I":{ id:"1I", name:"ʻOumuamua",
     composition:[
@@ -75,19 +74,11 @@ let current = PASSPORTS["1I"];
 </script>
 
 <script>
-/* ===================== HUD CANVAS ===================== */
-const SCALE = 1.25;
-const HUD_W = Math.round(1536*SCALE);
-const HUD_H = Math.round(864*SCALE);
-const PAD   = Math.round(34*SCALE);     /* чуть больше — чтобы ничего не слипалось */
-
-const hudCanvas = document.createElement('canvas');
-hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
-const g = hudCanvas.getContext('2d');
-
-const anim = {dur:1200,start:0,active:false};
-const easeOut = x => 1-Math.pow(1-x,3);
-const trigger  = now=>{anim.start=now; anim.active=true;};
+/* ==== HUD CANVAS ==== */
+const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(34*SCALE);
+const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
+const g=hudCanvas.getContext('2d');
+const anim={dur:1200,start:0,active:false}; const easeOut=x=>1-Math.pow(1-x,3); const trigger=now=>{anim.start=now;anim.active=true;}
 
 function frame(ctx,x,y,w,h,title){
   ctx.save();
@@ -128,13 +119,14 @@ function spectrum(ctx,x,y,w,h,lines,p){
   ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
   for(let gx=0;gx<=gw;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
   ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
-  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls, 380)-5, Lmax=Math.max(...Ls, 520)+5;
+  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls,380)-5, Lmax=Math.max(...Ls,520)+5;
   const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
   lines.forEach(l=>{
     const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p, top=ay+gh*(1-hRel);
     ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
     ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
-    ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24); ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`;
+    ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24);
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`;
     ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
   });
   ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(14*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+16*SCALE);
@@ -200,38 +192,30 @@ function renderHUD(now){
   g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
   g.fillStyle='#00ff66'; g.font=`bold ${Math.round(36*SCALE)}px ui-monospace,monospace`;
   g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 70*SCALE);
-
   const COLS=3, ROWS=2;
   const cellW=Math.floor((HUD_W-PAD*(COLS+1))/COLS);
   const cellH=Math.floor((HUD_H-110*SCALE-PAD*(ROWS+1))/ROWS);
   const X=c=> PAD + c*(cellW+PAD);
   const Y=r=> 86*SCALE + PAD + r*(cellH+PAD);
-
   frame(g, X(0),Y(0),cellW,cellH, `#${current.id} ${current.name} — Visible composition (proxies)`);
   capsules(g, X(0),Y(0)+22*SCALE,cellW,cellH-28*SCALE,current.composition,p);
-
   frame(g, X(1),Y(0),cellW,cellH,'Emission spectrum');
   spectrum(g, X(1),Y(0)+22*SCALE,cellW,cellH-28*SCALE,current.spectrum,p);
-
   frame(g, X(2),Y(0),cellW,cellH,'Velocity');
   donut(g, X(2),Y(0)+22*SCALE,cellW,cellH-28*SCALE,current.velocity.value,current.velocity.max,current.velocity.unit,current.velocity.ticks,null,p);
-
   frame(g, X(0),Y(1),cellW,cellH,'Mass (estimate)');
   massBar(g, X(0),Y(1)+22*SCALE,cellW,cellH-28*SCALE,current.mass.value,p);
-
   frame(g, X(1),Y(1),cellW,cellH,'Coolness index');
   donut(g, X(1),Y(1)+22*SCALE,cellW,cellH-28*SCALE,current.coolness.value,current.coolness.max,'%',[.25,.5,.75],'Coolness',p);
-
   frame(g, X(2),Y(1),cellW,cellH,'Data reliability');
   reliabilityStack(g, X(2),Y(1)+22*SCALE,cellW,cellH-28*SCALE,current.reliability,p);
-
   g.fillStyle='#aee8ff'; g.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
   g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48*SCALE, HUD_H-16*SCALE);
 }
 </script>
 
 <script>
-/* ===================== THREE / WEBXR ===================== */
+/* ==== THREE / WEBXR ==== */
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
@@ -261,15 +245,15 @@ function placeInFront(dist=CUR_DIST){
 }
 placeInFront(CUR_DIST);
 
-/* ===== 3D-МЕНЮ: теперь дочернее к панели, всегда над ней ===== */
-const ui3D=new THREE.Group(); holder.add(ui3D); // ПРИКРЕПЛЕНО К ПАНЕЛИ
-ui3D.position.set(0, PANEL_H/2 + 0.12, 0.06);   // чуть выше панели и ближе к глазам
+/* 3D-меню: прикреплено к панели, чуть ближе и выше */
+const ui3D=new THREE.Group(); holder.add(ui3D);
+ui3D.position.set(0, PANEL_H/2 + 0.12, 0.12);
 
 function makeButton(label,w=0.34,h=0.10){
   const cvs=document.createElement('canvas'); cvs.width=512; cvs.height=160;
   const cx=cvs.getContext('2d');
   cx.fillStyle='#102331'; cx.fillRect(0,0,cvs.width,cvs.height);
-  cx.strokeStyle='rgba(174,232,255,.5)'; cx.lineWidth=6; cx.strokeRect(8,8,cvs.width-16,cvs.height-16);
+  cx.strokeStyle='rgba(174,232,255,.6)'; cx.lineWidth=6; cx.strokeRect(8,8,cvs.width-16,cvs.height-16);
   cx.font='48px ui-monospace,monospace'; cx.fillStyle='#aee8ff';
   const tw=cx.measureText(label).width; cx.fillText(label,(cvs.width-tw)/2, 100);
   const tex=new THREE.CanvasTexture(cvs); tex.colorSpace=THREE.SRGBColorSpace;
@@ -296,46 +280,57 @@ bz.userData.onClick = ()=>{ CUR_DIST=Math.min(2.4, CUR_DIST+0.12); placeInFront(
 bZ.userData.onClick = ()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
 const buttons3D=[b1,b2,b3,bz,bZ];
 
-// Ретикула для gaze
+/* Ретикула (взгляд) — крупнее и всегда видна в XR */
 const reticle=new THREE.Sprite(new THREE.SpriteMaterial({color:0xffffff}));
-reticle.scale.set(0.006,0.006,1); reticle.position.set(0,0,-0.5);
+reticle.scale.set(0.02,0.02,1); reticle.position.set(0,0,-1);
 camera.add(reticle); reticle.visible=false;
 
-// Рэйкастер
+/* Рэйкастер + hover-подсветка */
 const raycaster=new THREE.Raycaster();
-function clickFromCamera(){
-  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  raycaster.set(camera.position, dir);
+let hovered=null;
+function hoverFrom(origin,dir){
+  raycaster.set(origin, dir.normalize());
   const inter=raycaster.intersectObjects(buttons3D,false);
-  if(inter.length) inter[0].object.userData.onClick();
+  const hit=inter.length?inter[0].object:null;
+  if(hovered!==hit){
+    if(hovered){ hovered.scale.set(1,1,1); }
+    hovered=hit;
+    if(hovered){ hovered.scale.set(1.06,1.06,1); }
+  }
+  return hit;
+}
+function clickObject(obj){ if(obj && obj.userData.onClick) obj.userData.onClick(); }
+function clickFromCamera(){
+  const o=camera.position.clone();
+  const d=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  const hit=hoverFrom(o,d);
+  clickObject(hit);
 }
 
-/* ===== Контроллеры: луч + «носик», видимость по connected/disconnected ===== */
+/* Контроллеры: лучи всегда видимы внутри XR, клики по select/squeeze */
 const controllers=[];
 for(let i=0;i<2;i++){
   const c=renderer.xr.getController(i);
   const lineGeom=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
   const line=new THREE.Line(lineGeom,new THREE.LineBasicMaterial({color:0xffffff}));
-  line.name='ray'; line.scale.z=2.0; c.add(line);
-  // «носик»
-  const tip=new THREE.Mesh(new THREE.SphereGeometry(0.01,16,16), new THREE.MeshBasicMaterial({color:0x99e0ff}));
-  tip.position.z=-0.5; c.add(tip);
-
+  line.name='ray'; line.scale.z=3.0; c.add(line);
+  const tip=new THREE.Mesh(new THREE.SphereGeometry(0.012,16,16), new THREE.MeshBasicMaterial({color:0x99e0ff}));
+  tip.position.z=-1.0; c.add(tip);
   c.visible=false;
-  c.addEventListener('connected', ()=>{ c.visible=true; });
-  c.addEventListener('disconnected', ()=>{ c.visible=false; });
 
-  c.addEventListener('selectstart', ()=>{
+  const doClick=()=>{
     const p=c.getWorldPosition(new THREE.Vector3());
-    const d=new THREE.Vector3(0,0,-1).applyQuaternion(c.quaternion).normalize();
-    raycaster.set(p,d);
-    const inter=raycaster.intersectObjects(buttons3D,false);
-    if(inter.length) inter[0].object.userData.onClick();
-  });
+    const d=new THREE.Vector3(0,0,-1).applyQuaternion(c.quaternion);
+    const hit=hoverFrom(p,d);
+    clickObject(hit);
+  };
+  c.addEventListener('selectstart', doClick);
+  c.addEventListener('squeezestart', doClick);
+
   scene.add(c); controllers.push(c);
 }
 
-/* ===== VR Button с overlay (required→optional) ===== */
+/* VR Button + overlay required→optional. В XR включаем лучи + ретикула. */
 function createVRButton(renderer, overlayRoot){
   const btn=document.createElement('button');
   btn.textContent='Enter VR';
@@ -356,13 +351,13 @@ function createVRButton(renderer, overlayRoot){
 
     document.getElementById('ui').style.display='none';
     ui3D.visible=true; reticle.visible=true;
-    placeInFront(CUR_DIST);
-    setTimeout(()=>placeInFront(CUR_DIST), 50);
+    controllers.forEach(c=>c.visible=true);   // <<< всегда включаем лучи
+    placeInFront(CUR_DIST); setTimeout(()=>placeInFront(CUR_DIST), 50);
 
     const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
     document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
 
-    s.addEventListener('selectstart', (ev)=>{
+    s.addEventListener('selectstart', (ev)=>{  // gaze тоже сюда попадает
       if(ev.inputSource && ev.inputSource.targetRayMode==='gaze'){ clickFromCamera(); }
     });
     s.addEventListener('end', ()=>{
@@ -370,6 +365,7 @@ function createVRButton(renderer, overlayRoot){
       document.getElementById('ui').style.display='';
       document.getElementById('overlayWarn').style.display='none';
       ui3D.visible=false; reticle.visible=false;
+      controllers.forEach(c=>c.visible=false);
     });
   }
 
@@ -381,7 +377,7 @@ function createVRButton(renderer, overlayRoot){
 }
 createVRButton(renderer, document.getElementById('ui'));
 
-/* ===== Браузерные кнопки ===== */
+/* Браузерные кнопки */
 function setComet(id){
   current = PASSPORTS[id];
   document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.toggle('active', b.dataset.id===id));
@@ -394,7 +390,7 @@ document.getElementById('zoomOut').onclick=()=>{ CUR_DIST=Math.min(2.4, CUR_DIST
 document.getElementById('zoomIn' ).onclick=()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
 document.getElementById('btnRecenter').onclick=()=>placeInFront(CUR_DIST);
 
-/* ===== Рендер / ресайз ===== */
+/* Ресайз / рендер */
 addEventListener('resize', ()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight); placeInFront(CUR_DIST);
@@ -402,6 +398,11 @@ addEventListener('resize', ()=>{
 
 let last=0, HUD_INTERVAL=1000/30;
 renderer.setAnimationLoop((t)=>{
+  // hover из камеры (gaze) — чтобы видеть подсветку сразу
+  const o=camera.position.clone();
+  const d=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  hoverFrom(o,d);
+
   if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
   renderer.render(scene,camera);
 });
