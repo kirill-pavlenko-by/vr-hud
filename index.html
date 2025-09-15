@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8" />
 <title>VR HUD — Interstellar Comet Passports (1I • 2I • 3I)</title>
@@ -8,29 +8,22 @@
 <style>
   :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-
-  /* ВЕРХНЕЕ МЕНЮ (в десктопе / как overlay если повезёт) */
-  #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-  #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.25);padding:6px 10px;border-radius:10px}
-  #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.35);background:#0e1720;color:var(--mint);cursor:pointer}
+  /* ВЕРХНЕЕ МЕНЮ (браузер) */
+  #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
+  #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
   #ui button.active{background:#123040;border-color:#45c0d4;color:#dff8ff}
   #ui .small{padding:6px 10px}
-
-  /* Кнопка входа в VR — снизу по центру */
-  #vrDock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:2000}
-
-  /* Подсказка, если overlay нет */
-  #overlayWarn{position:fixed;right:12px;bottom:12px;z-index:2000;background:#0a1018;border:1px solid rgba(174,232,255,.25);
-               padding:8px 12px;border-radius:10px;opacity:.9;display:none}
-
-  /* Канвас — под UI и не ловит клики в десктопе */
-  #glcanvas{position:fixed;inset:0;z-index:1;pointer-events:none}
-
+  /* КНОПКА ВХОДА В VR — снизу по центру */
+  #vrDock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:9}
+  /* Предупреждение про dom-overlay */
+  #overlayWarn{position:fixed;right:12px;bottom:14px;font:12px/1.2 ui-monospace,monospace;color:#ffdc7a;background:#2a2205;border:1px solid #6b5d1a;border-radius:8px;padding:8px 10px;display:none;z-index:9}
   canvas{display:block}
+  #build{position:fixed;left:10px;bottom:10px;opacity:.35;font-size:12px}
 </style>
 </head>
 <body>
-  <!-- HTML-UI -->
+  <!-- браузерное меню -->
   <div id="ui">
     <div class="seg" id="cometButtons">
       <button data-id="1I" class="active">1I/ʻOumuamua</button>
@@ -38,54 +31,85 @@
       <button data-id="3I">3I/ATLAS</button>
     </div>
     <div class="seg">
-      <button id="btnZoomOut" class="small">Zoom −</button>
-      <button id="btnZoomIn"  class="small">Zoom +</button>
-      <button id="btnBig"     class="small">BIG MODE: OFF</button>
+      <button id="zoomOut" class="small">Zoom −</button>
+      <button id="zoomIn"  class="small">Zoom +</button>
       <button id="btnRecenter" class="small">Recenter</button>
     </div>
   </div>
   <div id="vrDock"></div>
-  <div id="overlayWarn">DOM overlay is not available — 3D menu enabled (use controllers or trigger).</div>
+  <div id="overlayWarn">DOM overlay недоступен — включено 3D-меню (используй контроллеры или взгляд).</div>
+  <div id="build">BUILD: 2025-09-14-B</div>
 
-  <!-- THREE core -->
+  <!-- THREE -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-/* =========================================================
-   1) HUD CANVAS (графики + анимация)
-   ========================================================= */
-const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(28*SCALE);
-const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
-const g=hudCanvas.getContext('2d');
-const anim={dur:1000,start:0,active:false};
-const easeOut=x=>1-Math.pow(1-x,3);
-const trigger=now=>{anim.start=now;anim.active=true;};
-
-const PASSPORTS={
-  "1I":{id:"1I",name:"ʻOumuamua",
-    composition:[{label:"Organics (surface proxy)",value:70},{label:"H₂O (UL, visible)",value:3},{label:"CO (UL, visible)",value:2}],
-    spectrum:[{lambda:388,label:"CN",val:0.05},{lambda:405,label:"C₃",val:0.03}],
-    velocity:{value:26.30,max:100,unit:"km/s",ticks:[.25,.5,.75]},
-    mass:{value:0.10,unit:"rel."}, coolness:{value:92,max:100},
-    reliability:{measured:0.10,upper:0.20,inferred:0.70}
+/* ===================== ДАННЫЕ ПАСПОРТОВ ===================== */
+// видимый (proxy) состав для 1I; спектральных линий эмиссии у 1I не обнаружено
+const PASSPORTS = {
+  "1I":{ id:"1I", name:"ʻOumuamua",
+    composition:[ // proxy по отражённому свету + верхние пределы H2O/CO
+      { label:"Organics (surface proxy)", value:70 },
+      { label:"H₂O (UL, visible)", value:3 },
+      { label:"CO (UL, visible)",  value:2 }
+    ],
+    spectrum:[ /* пусто по эмиссии */ ],
+    velocity:{ value:26.30, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+    mass:{ value:0.10, unit:"rel." },
+    coolness:{ value:92, max:100 },
+    reliability:{ measured:0.10, upper:0.20, inferred:0.70 }
   },
-  "2I":{id:"2I",name:"Borisov",
-    composition:[{label:"H₂O",value:100},{label:"CO",value:150}],
-    spectrum:[{lambda:388,label:"CN",val:1.00},{lambda:405,label:"C₃",val:0.55},{lambda:516.5,label:"C₂",val:0.70}],
-    velocity:{value:32.70,max:100,unit:"km/s",ticks:[.25,.5,.75]},
-    mass:{value:0.55,unit:"rel."}, coolness:{value:85,max:100},
-    reliability:{measured:0.70,upper:0.10,inferred:0.20}
+  "2I":{ id:"2I", name:"Borisov",
+    composition:[
+      { label:"H₂O", value:100 },
+      { label:"CO",  value:150 }
+    ],
+    spectrum:[
+      { lambda:388, label:"CN", val:1.00 },
+      { lambda:405, label:"C₃", val:0.55 },
+      { lambda:516.5, label:"C₂", val:0.70 }
+    ],
+    velocity:{ value:32.70, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+    mass:{ value:0.55, unit:"rel." },
+    coolness:{ value:85, max:100 },
+    reliability:{ measured:0.70, upper:0.10, inferred:0.20 }
   },
-  "3I":{id:"3I",name:"ATLAS (C/2023 A3)",
-    composition:[{label:"H₂O",value:120},{label:"CO₂",value:110}],
-    spectrum:[{lambda:388,label:"CN",val:0.60},{lambda:405,label:"C₃",val:0.40},{lambda:516.5,label:"C₂",val:0.70}],
-    velocity:{value:63.00,max:100,unit:"km/s",ticks:[.25,.5,.75]},
-    mass:{value:0.35,unit:"rel."}, coolness:{value:78,max:100},
-    reliability:{measured:0.55,upper:0.15,inferred:0.30}
+  "3I":{ id:"3I", name:"ATLAS (C/2023 A3)",
+    composition:[
+      { label:"H₂O", value:120 },
+      { label:"CO₂", value:110 }
+    ],
+    spectrum:[
+      { lambda:388,  label:"CN", val:0.60 },
+      { lambda:405,  label:"C₃", val:0.40 },
+      { lambda:516.5,label:"C₂", val:0.70 }
+    ],
+    velocity:{ value:63.00, max:100, unit:"km/s", ticks:[.25,.5,.75] },
+    mass:{ value:0.35, unit:"rel." },
+    coolness:{ value:78, max:100 },
+    reliability:{ measured:0.55, upper:0.15, inferred:0.30 }
   }
 };
-let current=PASSPORTS["1I"];
+let current = PASSPORTS["1I"];
+</script>
 
+<script>
+/* ===================== HUD CANVAS ===================== */
+const SCALE = 1.25;                      // масштаб панели
+const HUD_W = Math.round(1536*SCALE);
+const HUD_H = Math.round(864*SCALE);
+const PAD   = Math.round(28*SCALE);
+
+const hudCanvas = document.createElement('canvas');
+hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
+const g = hudCanvas.getContext('2d');
+
+// анимация заполнения
+const anim = {dur:1200,start:0,active:false};
+const easeOut = x => 1-Math.pow(1-x,3);
+const trigger  = now=>{anim.start=now; anim.active=true;};
+
+// утилиты рисования
 function frame(ctx,x,y,w,h,title){
   ctx.save();
   ctx.fillStyle='#08141c'; ctx.globalAlpha=.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
@@ -100,10 +124,8 @@ function capsules(ctx,x,y,w,h,rows,p){
     const yy=top+i*(bh+gap);
     const perc=Math.max(0,Math.min(1,row.value/150));
     const rx=90*SCALE, rw=Math.max(16*SCALE,(w-120*SCALE)*perc*p), rh=bh;
-
     ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
     for(let gx=0;gx<w-100*SCALE;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
-
     const grad=ctx.createLinearGradient(0,yy,w-100*SCALE,yy);
     grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
     ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
@@ -113,9 +135,8 @@ function capsules(ctx,x,y,w,h,rows,p){
     ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
     ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
     ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
-
     ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
-    ctx.textAlign='left'; ctx.fillText(row.label, 8, yy+rh*.68);
+    ctx.textAlign='left';  ctx.fillText(row.label, 8, yy+rh*.68);
     ctx.textAlign='right'; ctx.fillText((row.value*p).toFixed(row.value<10?1:0), rx+rw, yy+rh*.68); ctx.textAlign='left';
   });
   ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
@@ -128,7 +149,7 @@ function spectrum(ctx,x,y,w,h,lines,p){
   ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
   for(let gx=0;gx<=gw;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
   ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
-  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls)-5, Lmax=Math.max(...Ls)+5;
+  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls, 380)-5, Lmax=Math.max(...Ls, 520)+5;
   const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
   lines.forEach(l=>{
     const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p, top=ay+gh*(1-hRel);
@@ -151,7 +172,8 @@ function donut(ctx,x,y,w,h,value,max,unit,ticks=[],title=null,p=1){
   ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
   ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
   const shown=Math.abs(value)*p;
-  ctx.fillStyle='#aee8ff'; ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`;
+  ctx.fillStyle='#aee8ff';
+  ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`; // на шаг меньше + без минуса
   const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt,cx-tw/2,cy+10*SCALE);
   ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
   const pct=Math.round((shown/max)*100), sub=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(sub).width; ctx.fillText(sub,cx-stw/2,cy+30*SCALE);
@@ -170,16 +192,28 @@ function reliabilityStack(ctx,x,y,w,h,r,p){
   ctx.save(); ctx.translate(x,y);
   ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Data reliability',8,18*SCALE);
   const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
-  const total=Math.max(1e-6,r.measured+r.upper+r.inferred), m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
+  const total=Math.max(1e-6,r.measured+r.upper+r.inferred),
+        m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
   const x0=ax+20*SCALE, barW=gw-40*SCALE, y0=ay+20*SCALE, bh=gh-40*SCALE;
   ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
-  let cur=x0; ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0,wm,bh); cur+=wm;
+  let cur=x0;
+  ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0,wm,bh); cur+=wm;
   ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0,wu,bh); cur+=wu;
   ctx.fillStyle='rgba(80,180,235,.55)'; const wi=barW*i; ctx.fillRect(cur,y0,wi,bh);
+  // подписи — не вылезаем за правую рамку
   ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
-  ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20*SCALE);
-  ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180*SCALE, y0+bh+20*SCALE);
-  ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380*SCALE, y0+bh+20*SCALE);
+  const maxRight = x0 + barW - 6*SCALE;
+  const labels = [
+    {txt:`Measured: ${(m*100).toFixed(0)}%`, x:x0},
+    {txt:`Upper Limit: ${(u*100).toFixed(0)}%`, x:x0+180*SCALE},
+    {txt:`Inference: ${(i*100).toFixed(0)}%`, x:x0+360*SCALE},
+  ];
+  labels.forEach(L=>{
+    let xText=L.x, wText=ctx.measureText(L.txt).width;
+    if (xText + wText > maxRight) xText = maxRight - wText;
+    if (xText < x0) xText = x0;
+    ctx.fillText(L.txt, xText, y0+bh+20*SCALE);
+  });
   ctx.restore();
 }
 function renderHUD(now){
@@ -216,11 +250,11 @@ function renderHUD(now){
   g.fillStyle='#aee8ff'; g.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
   g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48*SCALE, HUD_H-18*SCALE);
 }
+</script>
 
-/* =========================================================
-   2) THREE / WebXR
-   ========================================================= */
-const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,canvas:Object.assign(document.createElement('canvas'),{id:'glcanvas'})});
+<script>
+/* ===================== THREE / WEBXR ===================== */
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.xr.enabled=true;
@@ -231,22 +265,15 @@ const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04060a);
 const camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
 camera.position.set(0,1.6,0); scene.add(camera);
 
+// держатель панели и её геометрия
 const holder=new THREE.Group(); scene.add(holder);
-
-/* Панель + зум */
-let PANEL_SCALE=1.0;
-let CUR_DIST=1.7;
-const MIN_DIST=1.1, MAX_DIST=2.5, MIN_SCALE=0.85, MAX_SCALE=1.6;
-
-const PANEL_W=2.1, PANEL_H=1.25;
-const hudPanel=new THREE.Mesh(new THREE.PlaneGeometry(PANEL_W, PANEL_H), new THREE.MeshBasicMaterial({side:THREE.DoubleSide}));
+const hudTex=new THREE.CanvasTexture(hudCanvas);
+hudTex.colorSpace=THREE.SRGBColorSpace; hudTex.generateMipmaps=false;
+hudTex.minFilter=THREE.LinearFilter; hudTex.magFilter=THREE.LinearFilter;
+const hudPanel=new THREE.Mesh(new THREE.PlaneGeometry(2.1,1.25), new THREE.MeshBasicMaterial({map:hudTex, side:THREE.DoubleSide}));
 holder.add(hudPanel);
 
-const hudTex=new THREE.CanvasTexture(hudCanvas);
-hudTex.colorSpace=THREE.SRGBColorSpace;
-hudTex.generateMipmaps=false; hudTex.minFilter=THREE.LinearFilter; hudTex.magFilter=THREE.LinearFilter;
-hudPanel.material.map=hudTex;
-
+let CUR_DIST=1.7; // дистанция (зум)
 function placeInFront(dist=CUR_DIST){
   camera.updateMatrixWorld(true);
   holder.position.copy(camera.position);
@@ -254,172 +281,189 @@ function placeInFront(dist=CUR_DIST){
   holder.position.addScaledVector(forward, dist);
   holder.quaternion.copy(camera.quaternion);
 }
-function applyZoom(dir){
-  PANEL_SCALE = THREE.MathUtils.clamp(PANEL_SCALE + dir*0.08, MIN_SCALE, MAX_SCALE);
-  CUR_DIST    = THREE.MathUtils.clamp(CUR_DIST   - dir*0.08, MIN_DIST, MAX_DIST);
-  hudPanel.scale.setScalar(PANEL_SCALE);
-  placeInFront(CUR_DIST);
-}
 placeInFront(CUR_DIST);
 
-/* === Контроллеры: лучи поверх всего + маркер === */
-function makeController(i){
-  const c = renderer.xr.getController(i);
-  const rayGeom = new THREE.BufferGeometry().setFromPoints([ new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1) ]);
-  const rayMat  = new THREE.LineBasicMaterial({color:0x66ccff, depthTest:false});
-  const ray = new THREE.Line(rayGeom, rayMat); ray.scale.z=8; ray.renderOrder=999; c.add(ray);
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.01,12,12), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:false}));
-  dot.position.z=-0.05; dot.renderOrder=999; c.add(dot);
-  scene.add(c); return c;
-}
-const controller1 = makeController(0);
-const controller2 = makeController(1);
+// ===== 3D МЕНЮ (VR) =====
+const ui3D=new THREE.Group(); ui3D.visible=false; scene.add(ui3D);
 
-/* === Gaze-reticle (виден даже без контроллеров) === */
-const retParent = new THREE.Group(); camera.add(retParent);
-const reticle = new THREE.Mesh(new THREE.RingGeometry(0.01,0.016,32),
-  new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide, depthTest:false, transparent:true, opacity:0.9}));
-reticle.position.z = -1; retParent.add(reticle); reticle.visible=false;
-
-/* === 3D-меню (в VR ВСЕГДА), HTML-UI в VR прячем === */
-const ui3D = new THREE.Group(); ui3D.visible=false; holder.add(ui3D);
-
-function makeLabelMat(text){
-  const cw=512,ch=128, c=document.createElement('canvas'); c.width=cw; c.height=ch; const ctx=c.getContext('2d');
-  const r=22, x=6, y=6, w=cw-12, h=ch-12;
-  ctx.fillStyle='#0e1720'; ctx.strokeStyle='rgba(174,232,255,.35)'; ctx.lineWidth=4;
-  ctx.beginPath();
-  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
-  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
-  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
-  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='#aee8ff'; ctx.font='bold 44px ui-monospace,monospace';
-  const tw=ctx.measureText(text).width; ctx.fillText(text,(cw-tw)/2,82);
-  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace; return new THREE.MeshBasicMaterial({map:tex,transparent:true});
+function makeButton(label,w=0.34,h=0.10){
+  // текстурная кнопка из канваса
+  const cvs=document.createElement('canvas'); cvs.width=512; cvs.height=160;
+  const cx=cvs.getContext('2d');
+  cx.fillStyle='#102331'; cx.fillRect(0,0,cvs.width,cvs.height);
+  cx.strokeStyle='rgba(174,232,255,.5)'; cx.lineWidth=6; cx.strokeRect(8,8,cvs.width-16,cvs.height-16);
+  cx.font='48px ui-monospace,monospace'; cx.fillStyle='#aee8ff';
+  const tw=cx.measureText(label).width; cx.fillText(label,(cvs.width-tw)/2, 100);
+  const tex=new THREE.CanvasTexture(cvs); tex.colorSpace=THREE.SRGBColorSpace;
+  const m=new THREE.MeshBasicMaterial({map:tex, transparent:true});
+  const g=new THREE.PlaneGeometry(w,h); const mesh=new THREE.Mesh(g,m);
+  mesh.userData.onClick = ()=>{}; // заглушка — назначим ниже
+  mesh.userData.label = label;
+  return mesh;
 }
-function make3DButton(text, cb){
-  const m=makeLabelMat(text); const g=new THREE.PlaneGeometry(0.48,0.12); const mesh=new THREE.Mesh(g,m);
-  mesh.userData.onClick=cb; return mesh;
-}
-const b1 = make3DButton('1I/ʻOumuamua', ()=>setComet('1I'));
-const b2 = make3DButton('2I/Borisov',   ()=>setComet('2I'));
-const b3 = make3DButton('3I/ATLAS',     ()=>setComet('3I'));
-const bz = make3DButton('Zoom −',       ()=>applyZoom(-1));
-const bZ = make3DButton('Zoom +',       ()=>applyZoom(+1));
+
+const b1=makeButton('1I/ʻOumuamua');
+const b2=makeButton('2I/Borisov');
+const b3=makeButton('3I/ATLAS');
+const bz=makeButton('Zoom −',0.28,0.10);
+const bZ=makeButton('Zoom +',0.28,0.10);
+
 ui3D.add(b1,b2,b3,bz,bZ);
+
 function layout3D(){
-  ui3D.position.set(0,0.8,-0.01);
-  b1.position.set(-0.6, 0, 0);
-  b2.position.set( 0.0, 0, 0);
-  b3.position.set( 0.6, 0, 0);
-  bz.position.set(-0.25,-0.18,0);
-  bZ.position.set( 0.25,-0.18,0);
+  // меню «над» панелью и ближе к глазам
+  ui3D.position.set(0, 0.82, 0.06);
+
+  b1.position.set(-0.60,  0.00, 0);
+  b2.position.set( 0.00,  0.00, 0);
+  b3.position.set( 0.60,  0.00, 0);
+  bz.position.set(-0.25, -0.18, 0);
+  bZ.position.set( 0.25, -0.18, 0);
+
+  // рисуем поверх и без глубины — чтобы не пряталось за панелью
+  ui3D.traverse(obj=>{
+    if (obj.isMesh) {
+      obj.renderOrder = 999;
+      if (obj.material) {
+        obj.material.depthTest = false;
+        obj.material.depthWrite = false;
+        obj.material.transparent = true;
+        obj.material.opacity = 0.98;
+        obj.material.needsUpdate = true;
+      }
+    }
+  });
 }
 layout3D();
 
-/* Raycast по 3D-кнопкам */
-const raycaster=new THREE.Raycaster(); const tmp=new THREE.Matrix4();
-function hitButtons(ctrl){
-  if(!ui3D.visible) return;
-  tmp.identity().extractRotation(ctrl.matrixWorld);
-  const origin=new THREE.Vector3().setFromMatrixPosition(ctrl.matrixWorld);
-  const dir=new THREE.Vector3(0,0,-1).applyMatrix4(tmp);
-  raycaster.set(origin,dir);
-  const hits=raycaster.intersectObjects(ui3D.children,false);
-  if(hits.length>0){ const obj=hits[0].object; if(obj.userData.onClick) obj.userData.onClick(); }
-}
-function hitButtonsFromCamera(){ // gaze
-  if(!ui3D.visible) return;
-  const origin=new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld);
+// обработчики кнопок 3D
+b1.userData.onClick = ()=>{ setComet('1I'); };
+b2.userData.onClick = ()=>{ setComet('2I'); };
+b3.userData.onClick = ()=>{ setComet('3I'); };
+bz.userData.onClick = ()=>{ CUR_DIST=Math.min(2.4, CUR_DIST+0.12); placeInFront(CUR_DIST); };
+bZ.userData.onClick = ()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
+
+const buttons3D=[b1,b2,b3,bz,bZ];
+
+// ретикула (точка по центру вида) — для gaze
+const reticleMat=new THREE.SpriteMaterial({color:0xffffff});
+const reticle=new THREE.Sprite(reticleMat); reticle.scale.set(0.005,0.005,1);
+reticle.position.set(0,0,-0.5);
+camera.add(reticle); reticle.visible=false;
+
+// raycaster для кликов
+const raycaster=new THREE.Raycaster();
+function hitButtonsFromCamera(){
   const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  raycaster.set(origin,dir);
-  const hits=raycaster.intersectObjects(ui3D.children,false);
-  if(hits.length>0){ hits[0].object.userData.onClick?.(); }
+  raycaster.set(camera.position, dir);
+  const inter = raycaster.intersectObjects(buttons3D, false);
+  if(inter.length){ inter[0].object.userData.onClick(); }
 }
-controller1.addEventListener('selectstart', ()=>hitButtons(controller1));
-controller2.addEventListener('selectstart', ()=>hitButtons(controller2));
 
-/* DOM-кнопки (десктоп) */
-function setComet(id){
-  document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
-  const btn=document.querySelector(`#cometButtons button[data-id="${id}"]`); if(btn) btn.classList.add('active');
-  current=PASSPORTS[id]; trigger(performance.now());
+// контроллеры: лучи + клики
+const controllers=[];
+for(let i=0;i<2;i++){
+  const c=renderer.xr.getController(i);
+  // тонкая линия-луч
+  const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+  const line = new THREE.Line(lineGeom, new THREE.LineBasicMaterial({color:0xffffff}));
+  line.name='ray'; line.scale.z = 2.0; c.add(line);
+  c.addEventListener('selectstart', ()=>{ // клик
+    const p=c.getWorldPosition(new THREE.Vector3());
+    const d=new THREE.Vector3(0,0,-1).applyQuaternion(c.quaternion).normalize();
+    raycaster.set(p,d);
+    const inter = raycaster.intersectObjects(buttons3D,false);
+    if(inter.length){ inter[0].object.userData.onClick(); }
+  });
+  scene.add(c); controllers.push(c);
 }
-document.getElementById('cometButtons').addEventListener('click',e=>{
-  const b=e.target.closest('button[data-id]'); if(!b) return; setComet(b.dataset.id);
-});
-document.getElementById('btnRecenter').onclick=()=>placeInFront(CUR_DIST);
-document.getElementById('btnZoomIn').onclick = ()=>applyZoom(+1);
-document.getElementById('btnZoomOut').onclick= ()=>applyZoom(-1);
-let BIG=false;
-document.getElementById('btnBig').onclick=()=>{
-  BIG=!BIG; document.getElementById('btnBig').textContent=BIG?'BIG MODE: ON':'BIG MODE: OFF';
-  PANEL_SCALE=BIG?1.32:1.00; CUR_DIST=BIG?1.45:1.70; hudPanel.scale.setScalar(PANEL_SCALE); placeInFront(CUR_DIST);
-};
 
-/* VR-кнопка */
+/* ===== VR Button с dom-overlay (required → fallback) ===== */
 function createVRButton(renderer, overlayRoot){
-  const btn=document.createElement('button');
+  const btn = document.createElement('button');
   btn.textContent='Enter VR';
   btn.style.cssText='padding:10px 14px;border-radius:10px;background:#123040;color:#dff8ff;border:1px solid #45c0d4;cursor:pointer';
   document.getElementById('vrDock').appendChild(btn);
-  let session=null;
 
-  async function start(requireOverlay){
-    const init={
-      requiredFeatures:['local-floor'],
-      optionalFeatures:['hand-tracking','layers','dom-overlay'],
-      domOverlay:{root:overlayRoot}
+  if(!('xr' in navigator)){ btn.textContent='VR NOT SUPPORTED'; btn.disabled=true; return btn; }
+
+  let session=null;
+  async function startSession(requireOverlay){
+    const init = {
+      [requireOverlay?'requiredFeatures':'optionalFeatures']: ['local-floor','dom-overlay'],
+      domOverlay:{root: overlayRoot}
     };
-    if(requireOverlay){ init.requiredFeatures=['local-floor','dom-overlay']; }
-    const s=await navigator.xr.requestSession('immersive-vr',init);
-    await renderer.xr.setSession(s); return s;
+    const s = await navigator.xr.requestSession('immersive-vr', init);
+    await renderer.xr.setSession(s);
+    renderer.xr.enabled=true;
+
+    session=s; btn.textContent='Exit VR';
+
+    // показать 3D-меню/ретикул и спрятать браузерное
+    document.getElementById('ui').style.display='none';
+    ui3D.visible = true;
+    reticle.visible = true;
+
+    // центрируем панель сразу и через 50 мс (на начальный кадр)
+    placeInFront(CUR_DIST);
+    setTimeout(()=>placeInFront(CUR_DIST), 50);
+
+    // подсказка про overlay
+    const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
+    document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
+
+    // gaze-клик
+    s.addEventListener('selectstart', (ev)=>{
+      if(ev.inputSource && ev.inputSource.targetRayMode==='gaze'){ hitButtonsFromCamera(); }
+    });
+
+    s.addEventListener('end', ()=>{
+      session=null; btn.textContent='Enter VR';
+      document.getElementById('ui').style.display='';
+      document.getElementById('overlayWarn').style.display='none';
+      ui3D.visible=false;
+      reticle.visible=false;
+    });
   }
 
   btn.addEventListener('click', async ()=>{
     if(session){ await session.end(); return; }
-    try{
-      let s; try { s=await start(true); } catch(_){ s=await start(false); }
-      session=s; btn.textContent='Exit VR';
-
-      // В VR: скрываем HTML-меню, включаем 3D-меню всегда
-      document.getElementById('ui').style.display='none';
-      ui3D.visible=true; reticle.visible=true;  // пусть всегда будет gaze-точка
-      renderer.domElement.style.pointerEvents='auto';
-
-      const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
-      document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
-
-      // gaze-клик (если источник — взгляд)
-      s.addEventListener('selectstart', (ev)=>{
-        if(ev.inputSource && ev.inputSource.targetRayMode==='gaze'){ hitButtonsFromCamera(); }
-      });
-
-      s.addEventListener('end', ()=>{
-        session=null; btn.textContent='Enter VR';
-        renderer.domElement.style.pointerEvents='none';
-        document.getElementById('ui').style.display='';  // вернули HTML-UI
-        document.getElementById('overlayWarn').style.display='none';
-        ui3D.visible=false; reticle.visible=false;
-      });
-    }catch(err){
-      console.error(err); btn.textContent='VR ERROR';
+    try {            // пробуем с required dom-overlay
+      await startSession(true);
+    } catch(e){      // fallback: optional
+      try { await startSession(false); } catch(err){ console.warn(err); }
     }
   });
+  return btn;
 }
 createVRButton(renderer, document.getElementById('ui'));
 
-/* Ресайз и рендер */
+// ====== Браузерные кнопки ======
+function setComet(id){
+  current = PASSPORTS[id];
+  document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.toggle('active', b.dataset.id===id));
+  trigger(performance.now());
+}
+document.getElementById('cometButtons').addEventListener('click', (e)=>{
+  const btn=e.target.closest('button[data-id]'); if(!btn) return; setComet(btn.dataset.id);
+});
+document.getElementById('zoomOut').onclick=()=>{ CUR_DIST=Math.min(2.4, CUR_DIST+0.12); placeInFront(CUR_DIST); };
+document.getElementById('zoomIn' ).onclick=()=>{ CUR_DIST=Math.max(1.1, CUR_DIST-0.12); placeInFront(CUR_DIST); };
+document.getElementById('btnRecenter').onclick=()=>placeInFront(CUR_DIST);
+
+// ресайз
 addEventListener('resize', ()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
-  placeInFront(CUR_DIST);
+  renderer.setSize(innerWidth,innerHeight); placeInFront(CUR_DIST);
 });
+
+// цикл рендера
 let last=0, HUD_INTERVAL=1000/30;
 renderer.setAnimationLoop((t)=>{
   if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
   renderer.render(scene,camera);
 });
+// первичный запуск
 trigger(performance.now());
 </script>
 </body>
