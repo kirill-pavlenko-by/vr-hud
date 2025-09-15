@@ -8,20 +8,26 @@
 <style>
   :root{--bg:#04060a;--panel:#08141c;--mint:#aee8ff;--grid:#00aa55}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--mint);font-family:ui-monospace,Consolas,Monaco,monospace}
-  /* Верхнее меню — оверлей (и в VR тоже) */
-  #ui{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+
+  /* Верхний UI (и в VR как DOM-overlay) */
+  #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
   #ui .seg{display:flex;gap:6px;background:#0a1018;border:1px solid rgba(174,232,255,.2);padding:6px 10px;border-radius:10px}
   #ui button{padding:6px 12px;border-radius:8px;border:1px solid rgba(174,232,255,.25);background:#0e1720;color:var(--mint);cursor:pointer}
   #ui button.active{background:#123040;border-color:#45c0d4;color:#dff8ff}
   #ui .small{padding:6px 10px}
+
   /* Кнопка входа в VR — снизу по центру */
-  #vrDock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:9999}
-  #vrDock button{padding:10px 14px;border-radius:10px;background:#123040;color:#dff8ff;border:1px solid #45c0d4;cursor:pointer}
+  #vrDock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:9999}
+
+  /* Подсказка об отсутствии DOM-overlay */
+  #overlayWarn{position:fixed;right:12px;bottom:12px;z-index:9999;background:#0a1018;border:1px solid rgba(174,232,255,.2);
+               padding:8px 12px;border-radius:10px;opacity:.85;display:none}
+
   canvas{display:block}
-  #build{position:fixed;left:10px;bottom:10px;opacity:.5;font-size:12px}
 </style>
 </head>
 <body>
+  <!-- Верхнее меню (DOM-overlay, если доступен) -->
   <div id="ui">
     <div class="seg" id="cometButtons">
       <button data-id="1I" class="active">1I/ʻOumuamua</button>
@@ -29,333 +35,423 @@
       <button data-id="3I">3I/ATLAS</button>
     </div>
     <div class="seg">
-      <button id="btnBig"  class="small">BIG MODE: OFF</button>
+      <button id="btnZoomOut" class="small">Zoom −</button>
+      <button id="btnZoomIn"  class="small">Zoom +</button>
+      <button id="btnBig"     class="small">BIG MODE: OFF</button>
       <button id="btnRecenter" class="small">Recenter</button>
     </div>
   </div>
-  <div id="vrDock"><button id="vrBtn">Enter VR</button></div>
-  <div id="build">BUILD: 2025-09-14-B2</div>
+  <div id="vrDock"></div>
+  <div id="overlayWarn">DOM overlay is not available — using 3D menu.</div>
 
-  <!-- THREE (UMD) -->
+  <!-- THREE (core) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <!-- THREE examples: контроллеры и руки -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/stats.module.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/XRControllerModelFactory.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/XRHandModelFactory.min.js"></script>
 
-<script>
-/* ---------------------- ДАННЫЕ ПАСПОРТОВ ---------------------- */
-/* Видимый состав для 1I — прокси (органика на поверхности) + UL для H2O/CO */
-const PASSPORTS = {
-  "1I": {
-    id: "1I", name: "ʻOumuamua",
-    composition: [
-      { label: "Organics (surface proxy)", value: 70 },
-      { label: "H2O (UL, visible)", value: 3 },
-      { label: "CO (UL, visible)", value: 2 }
-    ],
-    spectrum: [
-      { lambda: 388, label: "CN", val: 0.05 },
-      { lambda: 405, label: "C3", val: 0.03 }
-    ],
-    velocity: { value: 26.30, max: 100, unit: "km/s", ticks: [0.25,0.5,0.75] },
-    mass: { value: 0.10, unit: "rel." },
-    coolness: { value: 92, max: 100 },
-    reliability: { measured: 0.10, upper: 0.20, inferred: 0.70 }
-  },
-  "2I": {
-    id: "2I", name: "Borisov",
-    composition: [
-      { label: "H2O", value: 100 },
-      { label: "CO",  value: 150 }
-    ],
-    spectrum: [
-      { lambda: 388, label: "CN",  val: 1.00 },
-      { lambda: 405, label: "C3",  val: 0.55 },
-      { lambda: 516.5, label:"C2", val: 0.70 }
-    ],
-    velocity: { value: 32.70, max: 100, unit: "km/s", ticks: [0.25,0.5,0.75] },
-    mass: { value: 0.55, unit: "rel." },
-    coolness: { value: 85, max: 100 },
-    reliability: { measured: 0.70, upper: 0.10, inferred: 0.20 }
-  },
-  "3I": {
-    id: "3I", name: "ATLAS (C/2023 A3)",
-    composition: [
-      { label: "H2O", value: 120 },
-      { label: "CO2", value: 110 }
-    ],
-    spectrum: [
-      { lambda: 388, label: "CN",  val: 0.60 },
-      { lambda: 405, label: "C3",  val: 0.40 },
-      { lambda: 516.5, label:"C2", val: 0.70 }
-    ],
-    velocity: { value: 63.00, max: 100, unit: "km/s", ticks: [0.25,0.5,0.75] },
-    mass: { value: 0.35, unit: "rel." },
-    coolness: { value: 78, max: 100 },
-    reliability: { measured: 0.55, upper: 0.15, inferred: 0.30 }
+  <script>
+  /* ===== VR Button с dom-overlay (required → fallback optional) ===== */
+  async function requestVRSession(renderer, overlayRoot){
+    if(!('xr' in navigator)) throw new Error('WebXR not supported');
+    // Сначала пробуем REQUIRED dom-overlay, затем OPTIONAL
+    const tryStart = async (requireOverlay) => {
+      const init = {
+        requiredFeatures: ['local-floor'],
+        optionalFeatures: ['hand-tracking', 'layers']
+      };
+      if (requireOverlay) {
+        init.requiredFeatures = ['local-floor','dom-overlay'];
+        init.domOverlay = { root: overlayRoot };
+      } else {
+        init.optionalFeatures.push('dom-overlay');
+        init.domOverlay = { root: overlayRoot };
+      }
+      const s = await navigator.xr.requestSession('immersive-vr', init);
+      await renderer.xr.setSession(s);
+      return s;
+    };
+    try {
+      return await tryStart(true);
+    } catch(e){
+      console.warn('required dom-overlay failed:', e);
+      try {
+        return await tryStart(false);
+      } catch(e2){
+        console.warn('optional dom-overlay failed:', e2);
+        throw e2;
+      }
+    }
   }
-};
-let current = PASSPORTS["1I"];
 
-/* ---------------------- РАЗМЕТКА HUD ---------------------- */
-let BASE_SCALE = 1.35;        // базовый масштаб
-let bigMode    = false;       // переключатель «крупно»
-let SCALE, HUD_W, HUD_H, PAD; // вычисляемые
-const hudCanvas = document.createElement('canvas');
-const g = hudCanvas.getContext('2d');
-const anim={dur:1000,start:0,active:false};
-const easeOut=x=>1-Math.pow(1-x,3);
-const trigger=now=>{anim.start=now;anim.active=true;};
+  function createVRButton(renderer, overlayRoot){
+    const btn = document.createElement('button');
+    btn.textContent='Enter VR';
+    btn.style.cssText='padding:10px 14px;border-radius:10px;background:#123040;color:#dff8ff;border:1px solid #45c0d4;cursor:pointer';
+    document.getElementById('vrDock').appendChild(btn);
 
-function recomputeDims() {
-  SCALE = BASE_SCALE * (bigMode ? 1.25 : 1.0);
-  HUD_W = Math.round(1536 * SCALE);
-  HUD_H = Math.round(864  * SCALE);
-  PAD   = Math.round(28   * SCALE);
-
-  hudCanvas.width  = HUD_W;
-  hudCanvas.height = HUD_H;
-
-  // Обновляем текстуру панели, размеры геометрии и позицию
-  if (hudTex) { hudTex.needsUpdate = true; }
-  if (hudPanel) {
-    hudPanel.geometry.dispose();
-    const PW = 3.0 * (bigMode ? 1.25 : 1.0); // ширина физической панели, м
-    const PH = 1.8 * (bigMode ? 1.25 : 1.0); // высота панели, м
-    hudPanel.geometry = new THREE.PlaneGeometry(PW, PH);
-    placeInFront(1.25); // держим ближе, чтобы было крупнее
+    let session=null;
+    btn.addEventListener('click', async ()=>{
+      if(session){ await session.end(); return; }
+      try {
+        const s = await requestVRSession(renderer, overlayRoot);
+        session=s; btn.textContent='Exit VR';
+        renderer.xr.enabled=true;
+        s.addEventListener('end', ()=>{ session=null; btn.textContent='Enter VR'; });
+        // показываем/скрываем подсказку про overlay
+        const hasOverlay = !!(s.domOverlayState && s.domOverlayState.type);
+        document.getElementById('overlayWarn').style.display = hasOverlay ? 'none' : 'block';
+        toggle3DMenu(!hasOverlay);
+      } catch(err){
+        console.error(err);
+        btn.textContent='VR ERROR';
+      }
+    });
+    return btn;
   }
-}
+  </script>
 
-function frame(ctx,x,y,w,h,title){
-  ctx.save();
-  ctx.fillStyle='#08141c'; ctx.globalAlpha=.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
-  ctx.strokeStyle='#00aa55'; ctx.lineWidth=2; ctx.setLineDash([8,6]); ctx.strokeRect(x+.5,y+.5,w-1,h-1); ctx.setLineDash([]);
-  if(title){ ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,x+10,y+22*SCALE); }
-  ctx.restore();
-}
-function capsules(ctx,x,y,w,h,rows,p){
-  const top=26*SCALE, gap=18*SCALE;
-  const bh=(h-top-24*SCALE-gap*(rows.length-1))/rows.length;
-  ctx.save(); ctx.translate(x,y);
-  rows.forEach((row,i)=>{
-    const yy=top+i*(bh+gap);
-    const perc=Math.max(0,Math.min(1,row.value/150));
-    const rx=90*SCALE, rw=Math.max(16*SCALE,(w-120*SCALE)*perc*p), rh=bh;
-    // сетка
-    ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
-    for(let gx=0;gx<w-100*SCALE;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
-    // капсула
-    const grad=ctx.createLinearGradient(0,yy,w-100*SCALE,yy);
-    grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
-    ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
-    const r=Math.min(14*SCALE,rh/2);
-    ctx.beginPath();
-    ctx.moveTo(rx+r,yy); ctx.lineTo(rx+rw-r,yy); ctx.quadraticCurveTo(rx+rw,yy,rx+rw,yy+r);
-    ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
-    ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
-    ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
-    ctx.textAlign='left'; ctx.fillText(row.label, 8, yy+rh*.68);
-    ctx.textAlign='right'; ctx.fillText((row.value*p).toFixed(row.value<10?1:0), rx+rw, yy+rh*.68); ctx.textAlign='left';
+  <script>
+  /* ===================== HUD CANVAS (как в твоей стабильной версии) ===================== */
+  const SCALE=1.25, HUD_W=Math.round(1536*SCALE), HUD_H=Math.round(864*SCALE), PAD=Math.round(28*SCALE);
+  const hudCanvas=document.createElement('canvas'); hudCanvas.width=HUD_W; hudCanvas.height=HUD_H;
+  const g=hudCanvas.getContext('2d');
+
+  // анимация «заливки»
+  const anim={dur:1000,start:0,active:false}; const easeOut=x=>1-Math.pow(1-x,3); const trigger=now=>{anim.start=now;anim.active=true;}
+
+  // ДАННЫЕ (актуализированные, кратко)
+  const PASSPORTS={
+    "1I":{id:"1I",name:"ʻOumuamua",
+      composition:[{label:"Organics (surface proxy)",value:70},{label:"H₂O (UL, visible)",value:3},{label:"CO (UL, visible)",value:2}],
+      spectrum:[{lambda:388,label:"CN",val:0.05},{lambda:405,label:"C₃",val:0.03}],
+      velocity:{value:26.30,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.10,unit:"rel."}, coolness:{value:92,max:100},
+      reliability:{measured:0.10,upper:0.20,inferred:0.70}
+    },
+    "2I":{id:"2I",name:"Borisov",
+      composition:[{label:"H₂O",value:100},{label:"CO",value:150}],
+      spectrum:[{lambda:388,label:"CN",val:1.00},{lambda:405,label:"C₃",val:0.55},{lambda:516.5,label:"C₂",val:0.70}],
+      velocity:{value:32.70,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.55,unit:"rel."}, coolness:{value:85,max:100},
+      reliability:{measured:0.70,upper:0.10,inferred:0.20}
+    },
+    "3I":{id:"3I",name:"ATLAS (C/2023 A3)",
+      composition:[{label:"H₂O",value:120},{label:"CO₂",value:110}],
+      spectrum:[{lambda:388,label:"CN",val:0.60},{lambda:405,label:"C₃",val:0.40},{lambda:516.5,label:"C₂",val:0.70}],
+      velocity:{value:63.00,max:100,unit:"km/s",ticks:[.25,.5,.75]},
+      mass:{value:0.35,unit:"rel."}, coolness:{value:78,max:100},
+      reliability:{measured:0.55,upper:0.15,inferred:0.30}
+    }
+  };
+  let current=PASSPORTS["1I"];
+
+  function frame(ctx,x,y,w,h,title){
+    ctx.save();
+    ctx.fillStyle='#08141c'; ctx.globalAlpha=.92; ctx.fillRect(x,y,w,h); ctx.globalAlpha=1;
+    ctx.strokeStyle='#00aa55'; ctx.lineWidth=2; ctx.setLineDash([8,6]); ctx.strokeRect(x+.5,y+.5,w-1,h-1); ctx.setLineDash([]);
+    if(title){ ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,x+10,y+22*SCALE); }
+    ctx.restore();
+  }
+  function capsules(ctx,x,y,w,h,rows,p){
+    const top=26*SCALE, gap=18*SCALE, bh=(h-top-24*SCALE-gap*(rows.length-1))/rows.length;
+    ctx.save(); ctx.translate(x,y);
+    rows.forEach((row,i)=>{
+      const yy=top+i*(bh+gap);
+      const perc=Math.max(0,Math.min(1,row.value/150));
+      const rx=90*SCALE, rw=Math.max(16*SCALE,(w-120*SCALE)*perc*p), rh=bh;
+      ctx.strokeStyle='rgba(0,224,255,.10)'; ctx.lineWidth=1;
+      for(let gx=0;gx<w-100*SCALE;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx,yy+rh); ctx.stroke(); }
+      const grad=ctx.createLinearGradient(0,yy,w-100*SCALE,yy);
+      grad.addColorStop(0,'rgba(120,240,255,.25)'); grad.addColorStop(.5,'rgba(160,250,255,.85)'); grad.addColorStop(1,'rgba(120,240,255,.25)');
+      ctx.fillStyle=grad; ctx.strokeStyle='rgba(120,240,255,.6)';
+      const r=Math.min(14*SCALE,rh/2);
+      ctx.beginPath();
+      ctx.moveTo(rx+r,yy); ctx.lineTo(rx+rw-r,yy); ctx.quadraticCurveTo(rx+rw,yy,rx+rw,yy+r);
+      ctx.lineTo(rx+rw,yy+rh-r); ctx.quadraticCurveTo(rx+rw,yy+rh,rx+rw-r,yy+rh);
+      ctx.lineTo(rx+r,yy+rh); ctx.quadraticCurveTo(rx,yy+rh,rx,yy+rh-r);
+      ctx.lineTo(rx,yy+r); ctx.quadraticCurveTo(rx,yy,rx+r,yy); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
+      ctx.textAlign='left'; ctx.fillText(row.label, 8, yy+rh*.68);
+      ctx.textAlign='right'; ctx.fillText((row.value*p).toFixed(row.value<10?1:0), rx+rw, yy+rh*.68); ctx.textAlign='left';
+    });
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+    ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6*SCALE);
+    ctx.restore();
+  }
+  function spectrum(ctx,x,y,w,h,lines,p){
+    ctx.save(); ctx.translate(x,y);
+    const ax=52*SCALE, ay=26*SCALE, gw=w-ax-16*SCALE, gh=h-ay-26*SCALE;
+    ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
+    for(let gx=0;gx<=gw;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
+    ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
+    const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls)-5, Lmax=Math.max(...Ls)+5;
+    const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
+    lines.forEach(l=>{
+      const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p, top=ay+gh*(1-hRel);
+      ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
+      ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
+      ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24); ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+      ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
+    });
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+20*SCALE);
+    ctx.restore();
+  }
+  function donut(ctx,x,y,w,h,value,max,unit,ticks=[],title=null,p=1){
+    ctx.save(); ctx.translate(x,y);
+    if(title){ ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,8,18*SCALE); }
+    const cx=w*.5, cy=h*.52, R=Math.min(w,h)*.32, T=Math.max(20*SCALE,R*.22);
+    ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.stroke();
+    const r=Math.max(0,Math.min(1,(Math.abs(value)/max)*p)), a0=-Math.PI/2, a1=a0 + r*Math.PI*2;
+    const grad=ctx.createLinearGradient(cx-R,cy,cx+R,cy); grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
+    ctx.strokeStyle=grad; ctx.lineWidth=T; ctx.lineCap='round'; ctx.beginPath(); ctx.arc(cx,cy,R,a0,a1); ctx.stroke();
+    ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
+    ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
+    const shown=Math.abs(value)*p;
+    ctx.fillStyle='#aee8ff';
+    ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`; // чуть меньше, минусов нет
+    const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt,cx-tw/2,cy+10*SCALE);
+    ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+    const pct=Math.round((shown/max)*100), sub=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(sub).width; ctx.fillText(sub,cx-stw/2,cy+30*SCALE);
+    ctx.restore();
+  }
+  function massBar(ctx,x,y,w,h,val,p){
+    ctx.save(); ctx.translate(x,y);
+    ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Mass (estimate)',8,18*SCALE);
+    const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
+    ctx.strokeStyle='rgba(0,224,255,.25)'; ctx.strokeRect(ax,ay,gw,gh);
+    ctx.fillStyle='rgba(160,250,255,.85)'; const hh=Math.max(6*SCALE, gh*val*p);
+    ctx.fillRect(ax+20*SCALE, ay+gh-hh, gw-40*SCALE, hh);
+    ctx.restore();
+  }
+  function reliabilityStack(ctx,x,y,w,h,r,p){
+    ctx.save(); ctx.translate(x,y);
+    ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Data reliability',8,18*SCALE);
+    const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
+    const total=Math.max(1e-6,r.measured+r.upper+r.inferred), m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
+    const x0=ax+20*SCALE, barW=gw-40*SCALE, y0=ay+20*SCALE, bh=gh-40*SCALE;
+    ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
+    let cur=x0; ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0,wm,bh); cur+=wm;
+    ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0,wu,bh); cur+=wu;
+    ctx.fillStyle='rgba(80,180,235,.55)'; const wi=barW*i; ctx.fillRect(cur,y0,wi,bh);
+    ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
+    ctx.fillText(`Measured: ${(m*100).toFixed(0)}%`, x0, y0+bh+20*SCALE);
+    ctx.fillText(`Upper Limit: ${(u*100).toFixed(0)}%`, x0+180*SCALE, y0+bh+20*SCALE);
+    ctx.fillText(`Inference: ${(i*100).toFixed(0)}%`, x0+380*SCALE, y0+bh+20*SCALE);
+    ctx.restore();
+  }
+  function renderHUD(now){
+    const p=anim.active?Math.min(1,(now-anim.start)/anim.dur):1, t=easeOut(p);
+    if(p>=1&&anim.active) anim.active=false;
+    g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
+    g.fillStyle='#00ff66'; g.font=`bold ${Math.round(38*SCALE)}px ui-monospace,monospace`;
+    g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 72*SCALE);
+
+    const COLS=3, ROWS=2;
+    const cellW=Math.floor((HUD_W-PAD*(COLS+1))/COLS);
+    const cellH=Math.floor((HUD_H-110*SCALE-PAD*(ROWS+1))/ROWS);
+    const X=c=> PAD + c*(cellW+PAD);
+    const Y=r=> 90*SCALE + PAD + r*(cellH+PAD);
+
+    frame(g, X(0),Y(0),cellW,cellH, `#${current.id} ${current.name} — Visible composition (proxies)`);
+    capsules(g, X(0),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.composition,t);
+
+    frame(g, X(1),Y(0),cellW,cellH,'Emission spectrum');
+    spectrum(g, X(1),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.spectrum,t);
+
+    frame(g, X(2),Y(0),cellW,cellH,'Velocity');
+    donut(g, X(2),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.velocity.value,current.velocity.max,current.velocity.unit,current.velocity.ticks,null,t);
+
+    frame(g, X(0),Y(1),cellW,cellH,'Mass (estimate)');
+    massBar(g, X(0),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.mass.value,t);
+
+    frame(g, X(1),Y(1),cellW,cellH,'Coolness index');
+    donut(g, X(1),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.coolness.value,current.coolness.max,'%',[.25,.5,.75],'Coolness',t);
+
+    frame(g, X(2),Y(1),cellW,cellH,'Data reliability');
+    reliabilityStack(g, X(2),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.reliability,t);
+
+    g.fillStyle='#aee8ff'; g.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
+    g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48*SCALE, HUD_H-18*SCALE);
+  }
+  </script>
+
+  <script>
+  /* ===================== THREE / WEBXR + контроллеры/руки + 3D-меню ===================== */
+  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+  renderer.xr.enabled=true;
+  renderer.outputColorSpace=THREE.SRGBColorSpace;
+  document.body.appendChild(renderer.domElement);
+  createVRButton(renderer, document.getElementById('ui'));
+
+  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04060a);
+  const camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
+  camera.position.set(0,1.6,0); scene.add(camera);
+
+  const holder=new THREE.Group(); scene.add(holder);
+
+  // Параметры панели/зум
+  let PANEL_SCALE=1.0;
+  let CUR_DIST=1.7;
+  const MIN_DIST=1.1, MAX_DIST=2.5, MIN_SCALE=0.85, MAX_SCALE=1.6;
+
+  // Геометрия панели (плоская)
+  const PANEL_W=2.1, PANEL_H=1.25;
+  const hudPanel=new THREE.Mesh(
+    new THREE.PlaneGeometry(PANEL_W, PANEL_H),
+    new THREE.MeshBasicMaterial({side:THREE.DoubleSide})
+  );
+  holder.add(hudPanel);
+
+  // Текстура из HUD-canvas
+  const hudTex=new THREE.CanvasTexture(hudCanvas);
+  hudTex.colorSpace=THREE.SRGBColorSpace;
+  hudTex.generateMipmaps=false; hudTex.minFilter=THREE.LinearFilter; hudTex.magFilter=THREE.LinearFilter;
+  hudPanel.material.map=hudTex;
+
+  function placeInFront(dist=CUR_DIST){
+    camera.updateMatrixWorld(true);
+    holder.position.copy(camera.position);
+    const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    holder.position.addScaledVector(forward, dist);
+    holder.quaternion.copy(camera.quaternion);
+  }
+  function applyZoom(dir){
+    // dir = +1 (увеличить), -1 (уменьшить)
+    PANEL_SCALE = THREE.MathUtils.clamp(PANEL_SCALE + dir*0.08, MIN_SCALE, MAX_SCALE);
+    CUR_DIST    = THREE.MathUtils.clamp(CUR_DIST   - dir*0.08, MIN_DIST, MAX_DIST);
+    hudPanel.scale.setScalar(PANEL_SCALE);
+    placeInFront(CUR_DIST);
+  }
+  placeInFront(CUR_DIST);
+
+  // ===== Контроллеры, лучи и модели =====
+  const controller1 = renderer.xr.getController(0);
+  const controller2 = renderer.xr.getController(1);
+  scene.add(controller1, controller2);
+
+  const rayGeom = new THREE.BufferGeometry().setFromPoints([ new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1) ]);
+  const rayMat = new THREE.LineBasicMaterial({ color: 0x66ccff });
+  const rayLen = 8;
+  const ray1 = new THREE.Line(rayGeom, rayMat); ray1.name='ray'; ray1.scale.z=rayLen; controller1.add(ray1);
+  const ray2 = new THREE.Line(rayGeom, rayMat.clone()); ray2.name='ray'; ray2.scale.z=rayLen; controller2.add(ray2);
+
+  // Модели контроллеров
+  const controllerModelFactory = new THREE.XRControllerModelFactory();
+  const grip1 = renderer.xr.getControllerGrip(0); grip1.add(controllerModelFactory.createControllerModel(grip1)); scene.add(grip1);
+  const grip2 = renderer.xr.getControllerGrip(1); grip2.add(controllerModelFactory.createControllerModel(grip2)); scene.add(grip2);
+
+  // Руки (если включено в системе)
+  const handFactory = new THREE.XRHandModelFactory();
+  const hand1 = renderer.xr.getHand(0); hand1.add(handFactory.createHandModel(hand1, 'mesh')); scene.add(hand1);
+  const hand2 = renderer.xr.getHand(1); hand2.add(handFactory.createHandModel(hand2, 'mesh')); scene.add(hand2);
+
+  // ===== 3D-меню (fallback когда нет DOM-overlay) =====
+  const ui3DGroup = new THREE.Group(); ui3DGroup.visible=false; scene.add(ui3DGroup);
+
+  function makeButtonCanvas(label){
+    const c = document.createElement('canvas'); c.width=512; c.height=128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle='#0e1720'; ctx.strokeStyle='rgba(174,232,255,.35)'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.roundRect(6,6,c.width-12,c.height-12,18); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#aee8ff'; ctx.font='bold 44px ui-monospace,monospace';
+    const tw = ctx.measureText(label).width;
+    ctx.fillText(label, (c.width-tw)/2, 78);
+    return c;
+  }
+  function make3DButton(label, onClick){
+    const tex = new THREE.CanvasTexture(makeButtonCanvas(label)); tex.colorSpace=THREE.SRGBColorSpace;
+    const m = new THREE.MeshBasicMaterial({map:tex, transparent:true});
+    const g = new THREE.PlaneGeometry(0.48, 0.12);
+    const mesh = new THREE.Mesh(g,m);
+    mesh.userData.onClick = onClick;
+    return mesh;
+  }
+
+  const btn1I = make3DButton('1I/ʻOumuamua', ()=>setComet('1I'));
+  const btn2I = make3DButton('2I/Borisov',   ()=>setComet('2I'));
+  const btn3I = make3DButton('3I/ATLAS',     ()=>setComet('3I'));
+  const btnZ1 = make3DButton('Zoom +',       ()=>applyZoom(+1));
+  const btnZ0 = make3DButton('Zoom −',       ()=>applyZoom(-1));
+
+  ui3DGroup.add(btn1I,btn2I,btn3I,btnZ0,btnZ1);
+  function layout3DMenu(){
+    // повесим меню над панелью
+    ui3DGroup.position.set(0, 0.8, -0.01);
+    btn1I.position.set(-0.6, 0, 0);
+    btn2I.position.set( 0.0, 0, 0);
+    btn3I.position.set( 0.6, 0, 0);
+    btnZ0.position.set(-0.25, -0.18, 0);
+    btnZ1.position.set( 0.25, -0.18, 0);
+  }
+  layout3DMenu();
+  holder.add(ui3DGroup);
+
+  function toggle3DMenu(show){ ui3DGroup.visible = !!show; }
+
+  // Raycast по 3D-кнопкам
+  const tempMatrix = new THREE.Matrix4();
+  const raycaster = new THREE.Raycaster();
+  function handleSelect(controller){
+    if(!ui3DGroup.visible) return;
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+    const direction = new THREE.Vector3(0,0,-1).applyMatrix4(tempMatrix);
+    raycaster.set(origin, direction);
+    const hits = raycaster.intersectObjects(ui3DGroup.children, false);
+    if(hits.length>0){
+      const obj = hits[0].object;
+      if(obj.userData.onClick) obj.userData.onClick();
+    }
+  }
+  controller1.addEventListener('selectstart', ()=>handleSelect(controller1));
+  controller2.addEventListener('selectstart', ()=>handleSelect(controller2));
+
+  // ===== Кнопки DOM (для обычного режима и overlay) =====
+  function setComet(id){
+    document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
+    const btn = document.querySelector(`#cometButtons button[data-id="${id}"]`);
+    if(btn) btn.classList.add('active');
+    current = PASSPORTS[id];
+    trigger(performance.now());
+  }
+  document.getElementById('cometButtons').addEventListener('click',(e)=>{
+    const b=e.target.closest('button[data-id]'); if(!b) return;
+    setComet(b.dataset.id);
   });
-  ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
-  ctx.fillText('Relative to water = 100 (HST/COS)', 8, h-6*SCALE);
-  ctx.restore();
-}
-function spectrum(ctx,x,y,w,h,lines,p){
-  ctx.save(); ctx.translate(x,y);
-  const ax=52*SCALE, ay=26*SCALE, gw=w-ax-16*SCALE, gh=h-ay-26*SCALE;
-  ctx.strokeStyle='rgba(0,224,255,.15)'; ctx.lineWidth=1;
-  for(let gx=0;gx<=gw;gx+=80*SCALE){ ctx.beginPath(); ctx.moveTo(ax+gx,ay); ctx.lineTo(ax+gx,ay+gh); ctx.stroke(); }
-  ctx.strokeStyle='rgba(0,224,255,.35)'; ctx.beginPath(); ctx.moveTo(ax,ay+gh); ctx.lineTo(ax+gw,ay+gh); ctx.stroke();
-  const Ls=lines.map(l=>l.lambda), Lmin=Math.min(...Ls)-5, Lmax=Math.max(...Ls)+5;
-  const sx=λ=> ax+(λ-Lmin)/(Lmax-Lmin)*gw;
-  lines.forEach(l=>{
-    const lx=sx(l.lambda), hRel=Math.max(.2,Math.min(1,l.val))*p, top=ay+gh*(1-hRel);
-    ctx.strokeStyle='rgba(160,250,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(lx,ay+gh); ctx.lineTo(lx,top); ctx.stroke();
-    ctx.fillStyle='rgba(160,250,255,.95)'; ctx.beginPath(); ctx.arc(lx,top,5*SCALE,0,Math.PI*2); ctx.fill();
-    ctx.save(); ctx.translate(lx+6*SCALE, top-8*SCALE); ctx.rotate(-.24); ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`;
-    ctx.fillText(`${l.label} (${l.lambda} nm)`,0,0); ctx.restore();
+  document.getElementById('btnRecenter').onclick=()=>placeInFront(CUR_DIST);
+  document.getElementById('btnZoomIn').onclick = ()=>applyZoom(+1);
+  document.getElementById('btnZoomOut').onclick= ()=>applyZoom(-1);
+
+  let BIG=false;
+  document.getElementById('btnBig').onclick=()=>{
+    BIG=!BIG;
+    document.getElementById('btnBig').textContent = BIG ? 'BIG MODE: ON' : 'BIG MODE: OFF';
+    PANEL_SCALE = BIG ? 1.32 : 1.00;
+    CUR_DIST    = BIG ? 1.45 : 1.70;
+    hudPanel.scale.setScalar(PANEL_SCALE);
+    placeInFront(CUR_DIST);
+  };
+
+  // Resize
+  addEventListener('resize', ()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+    placeInFront(CUR_DIST);
   });
-  ctx.fillStyle='#aee8ff'; ctx.font=`${Math.round(16*SCALE)}px ui-monospace,monospace`; ctx.fillText('λ, nm', ax+gw-40*SCALE, ay+gh+20*SCALE);
-  ctx.restore();
-}
-function donut(ctx,x,y,w,h,value,max,unit,ticks=[],title=null,p=1){
-  ctx.save(); ctx.translate(x,y);
-  if(title){ ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText(title,8,18*SCALE); }
-  const cx=w*.5, cy=h*.52, R=Math.min(w,h)*.32, T=Math.max(18*SCALE,R*.20);
-  ctx.strokeStyle='rgba(0,168,160,.35)'; ctx.lineWidth=T; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.stroke();
-  const r=Math.max(0,Math.min(1,(Math.abs(value)/max)*p)), a0=-Math.PI/2, a1=a0 + r*Math.PI*2;
-  const grad=ctx.createLinearGradient(cx-R,cy,cx+R,cy); grad.addColorStop(0,'#7fe7ff'); grad.addColorStop(1,'#45c0d4');
-  ctx.strokeStyle=grad; ctx.lineWidth=T; ctx.lineCap='round'; ctx.beginPath(); ctx.arc(cx,cy,R,a0,a1); ctx.stroke();
-  ctx.strokeStyle='rgba(160,240,255,.6)'; ctx.lineWidth=5;
-  ticks.forEach(t=>{ const a=a0+t*Math.PI*2, r1=R-T*.55, r2=R-T*.1; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1); ctx.lineTo(cx+Math.cos(a)*r2,cy+Math.sin(a)*r2); ctx.stroke(); });
-  const shown=Math.abs(value)*p;
-  ctx.fillStyle='#aee8ff'; ctx.font=`bold ${Math.round(26*SCALE)}px ui-monospace,monospace`;
-  const txt=`${shown.toFixed(2)} ${unit}`; const tw=ctx.measureText(txt).width; ctx.fillText(txt,cx-tw/2,cy+8*SCALE);
-  ctx.font=`${Math.round(15*SCALE)}px ui-monospace,monospace`;
-  const pct=Math.round((shown/max)*100), sub=`${pct}% of ${max} ${unit}`; const stw=ctx.measureText(sub).width; ctx.fillText(sub,cx-stw/2,cy+28*SCALE);
-  ctx.restore();
-}
-function massBar(ctx,x,y,w,h,val,p){
-  ctx.save(); ctx.translate(x,y);
-  ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Mass (estimate)',8,18*SCALE);
-  const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
-  ctx.strokeStyle='rgba(0,224,255,.25)'; ctx.strokeRect(ax,ay,gw,gh);
-  ctx.fillStyle='rgba(160,250,255,.85)'; const hh=Math.max(6*SCALE, gh*val*p);
-  ctx.fillRect(ax+20*SCALE, ay+gh-hh, gw-40*SCALE, hh);
-  ctx.restore();
-}
-function reliabilityStack(ctx,x,y,w,h,r,p){
-  ctx.save(); ctx.translate(x,y);
-  ctx.fillStyle='#5fd7ff'; ctx.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`; ctx.fillText('Data reliability',8,18*SCALE);
-  const ax=60*SCALE, ay=28*SCALE, gw=w-ax-20*SCALE, gh=h-ay-28*SCALE;
-  const total=Math.max(1e-6,r.measured+r.upper+r.inferred), m=(r.measured/total)*p, u=(r.upper/total)*p, i=(r.inferred/total)*p;
-  const x0=ax+20*SCALE, barW=gw-40*SCALE, y0=ay+20*SCALE, bh=gh-40*SCALE;
-  ctx.fillStyle='rgba(0,224,255,.08)'; ctx.fillRect(x0,y0,barW,bh);
-  let cur=x0; ctx.fillStyle='rgba(120,240,255,.85)'; const wm=barW*m; ctx.fillRect(cur,y0,wm,bh); cur+=wm;
-  ctx.fillStyle='rgba(120,200,255,.65)'; const wu=barW*u; ctx.fillRect(cur,y0,wu,bh); cur+=wu;
-  ctx.fillStyle='rgba(80,180,235,.55)'; const wi=barW*i; ctx.fillRect(cur,y0,wi,bh);
-  // подписи — автоматически поджимаем, чтобы не вылезало за рамки
-  let f = 15*SCALE; ctx.font=`${Math.round(f)}px ui-monospace,monospace`; ctx.fillStyle='#aee8ff';
-  const lines = [
-    `Measured: ${(m*100).toFixed(0)}%`,
-    `Upper Limit: ${(u*100).toFixed(0)}%`,
-    `Inference: ${(i*100).toFixed(0)}%`
-  ];
-  // если не помещаемся — уменьшаем шрифт
-  while (ctx.measureText(lines.join('  ')).width > barW && f>10*SCALE) {
-    f -= 1*SCALE; ctx.font=`${Math.round(f)}px ui-monospace,monospace`;
-  }
-  let tx=x0, gap=16*SCALE;
-  lines.forEach(t=>{ ctx.fillText(t, tx, y0+bh+20*SCALE); tx += ctx.measureText(t).width + gap; });
-  ctx.restore();
-}
-function renderHUD(now){
-  const p=anim.active?Math.min(1,(now-anim.start)/anim.dur):1, t=easeOut(p);
-  if(p>=1&&anim.active) anim.active=false;
 
-  // Полная очистка
-  g.setTransform(1,0,0,1,0,0);
-  g.clearRect(0,0,HUD_W,HUD_H);
+  // Рендер-цикл
+  let last=0, HUD_INTERVAL=1000/30;
+  renderer.setAnimationLoop((t)=>{
+    if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
+    renderer.render(scene,camera);
+  });
 
-  g.fillStyle='#04060a'; g.fillRect(0,0,HUD_W,HUD_H);
-  g.fillStyle='#00ff66'; g.font=`bold ${Math.round(38*SCALE)}px ui-monospace,monospace`;
-  g.fillText('C:\\> INTERSTELLAR COMET HUD // VR', 48*SCALE, 72*SCALE);
-
-  const COLS=3, ROWS=2;
-  const cellW=Math.floor((HUD_W-PAD*(COLS+1))/COLS);
-  const cellH=Math.floor((HUD_H-110*SCALE-PAD*(ROWS+1))/ROWS);
-  const X=c=> PAD + c*(cellW+PAD);
-  const Y=r=> 90*SCALE + PAD + r*(cellH+PAD);
-
-  frame(g, X(0),Y(0),cellW,cellH, `#${current.id} ${current.name} — Visible composition (proxies)`);
-  capsules(g, X(0),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.composition,t);
-
-  frame(g, X(1),Y(0),cellW,cellH,'Emission spectrum');
-  spectrum(g, X(1),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.spectrum,t);
-
-  frame(g, X(2),Y(0),cellW,cellH,'Velocity');
-  donut(g, X(2),Y(0)+24*SCALE,cellW,cellH-30*SCALE,current.velocity.value,current.velocity.max,current.velocity.unit,current.velocity.ticks,null,t);
-
-  frame(g, X(0),Y(1),cellW,cellH,'Mass (estimate)');
-  massBar(g, X(0),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.mass.value,t);
-
-  frame(g, X(1),Y(1),cellW,cellH,'Coolness index');
-  donut(g, X(1),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.coolness.value,current.coolness.max,'%',[.25,.5,.75],'Coolness',t);
-
-  frame(g, X(2),Y(1),cellW,cellH,'Data reliability');
-  reliabilityStack(g, X(2),Y(1)+24*SCALE,cellW,cellH-30*SCALE,current.reliability,t);
-
-  g.fillStyle='#aee8ff'; g.font=`${Math.round(18*SCALE)}px ui-monospace,monospace`;
-  g.fillText(`STATUS: ONLINE  |  ${new Date().toLocaleTimeString()}`, 48*SCALE, HUD_H-18*SCALE);
-}
-
-/* ---------------------- THREE / WEBXR ---------------------- */
-const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth,innerHeight);
-renderer.xr.enabled=true;
-renderer.outputColorSpace=THREE.SRGBColorSpace;
-document.body.appendChild(renderer.domElement);
-
-const scene=new THREE.Scene(); scene.background=new THREE.Color(0x04060a);
-const camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 50);
-camera.position.set(0,1.6,0); scene.add(camera);
-
-const holder=new THREE.Group(); scene.add(holder);
-let hudTex=new THREE.CanvasTexture(hudCanvas);
-hudTex.colorSpace=THREE.SRGBColorSpace;
-hudTex.generateMipmaps=false; hudTex.minFilter=THREE.LinearFilter; hudTex.magFilter=THREE.LinearFilter;
-const hudMaterial=new THREE.MeshBasicMaterial({map:hudTex, side:THREE.DoubleSide});
-let hudPanel=new THREE.Mesh(new THREE.PlaneGeometry(3.0,1.8), hudMaterial); // плоская панель
-holder.add(hudPanel);
-
-function placeInFront(dist=1.25){
-  camera.updateMatrixWorld(true);
-  holder.position.copy(camera.position);
-  const forward=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-  holder.position.addScaledVector(forward, dist);
-  holder.quaternion.copy(camera.quaternion);
-}
-
-recomputeDims();      // вычисляем размеры
-placeInFront(1.25);   // ставим перед пользователем
-
-// UI: кометы / BIG / recenter
-document.getElementById('cometButtons').addEventListener('click',(e)=>{
-  const btn=e.target.closest('button[data-id]'); if(!btn) return;
-  document.querySelectorAll('#cometButtons button').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active'); current=PASSPORTS[btn.dataset.id]; trigger(performance.now());
-});
-document.getElementById('btnBig').onclick=()=>{
-  bigMode=!bigMode;
-  document.getElementById('btnBig').textContent=bigMode?'BIG MODE: ON':'BIG MODE: OFF';
-  recomputeDims(); trigger(performance.now());
-};
-document.getElementById('btnRecenter').onclick=()=>placeInFront(1.25);
-
-addEventListener('resize', ()=>{
-  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight); placeInFront(1.25);
-});
-
-// Рендер-цикл
-let last=0, HUD_INTERVAL=1000/30;
-renderer.setAnimationLoop((t)=>{
-  if(t-last>HUD_INTERVAL){ renderHUD(t); hudTex.needsUpdate=true; last=t; }
-  renderer.render(scene,camera);
-});
-trigger(performance.now()); // стартовая анимация
-
-/* ---------------------- КНОПКА VR (надёжный запрос) ---------------------- */
-const vrBtn = document.getElementById('vrBtn');
-
-async function startVR() {
-  if (!('xr' in navigator)) { vrBtn.textContent='VR NOT SUPPORTED'; vrBtn.disabled=true; return; }
-
-  try {
-    const ok = await navigator.xr.isSessionSupported('immersive-vr');
-    if (!ok) { vrBtn.textContent='VR NOT SUPPORTED'; return; }
-
-    const features = ['local-floor'];         // базовые
-    // dom-overlay пробуем как опцию, чтобы не завалить запуск
-    const init = { optionalFeatures: [...features, 'dom-overlay'], domOverlay: { root: document.body } };
-
-    const s = await navigator.xr.requestSession('immersive-vr', init);
-    await renderer.xr.setSession(s);
-    renderer.xr.enabled = true;
-    vrBtn.textContent = 'Exit VR';
-    s.addEventListener('end', ()=>{ vrBtn.textContent='Enter VR'; });
-  } catch (e) {
-    console.warn('XR error:', e);
-    vrBtn.textContent = 'VR ERROR';
-  }
-}
-
-vrBtn.addEventListener('click', async ()=>{
-  const session = renderer.xr.getSession?.();
-  if (session) { await session.end(); return; }
-  startVR();
-});
-</script>
+  // первичный запуск анимации
+  trigger(performance.now());
+  </script>
 </body>
 </html>
